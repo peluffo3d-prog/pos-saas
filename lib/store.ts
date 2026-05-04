@@ -242,6 +242,27 @@ export async function eliminarVenta(id: number): Promise<void> {
   await supabase().from("ventas").delete().eq("id", id).eq("tenant_id", tenantId)
 }
 
+export interface DatosEditarVenta {
+  metodoPago: MetodoPago
+  montoEfectivo: number
+  montoTransferencia: number
+}
+
+export async function editarVenta(id: number, datos: DatosEditarVenta): Promise<void> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return
+
+  await supabase()
+    .from("ventas")
+    .update({
+      metodo_pago: datos.metodoPago,
+      monto_efectivo: datos.montoEfectivo,
+      monto_transferencia: datos.montoTransferencia,
+    })
+    .eq("id", id)
+    .eq("tenant_id", tenantId)
+}
+
 export async function realizarVenta(
   productoId: number,
   cantidadVender: number,
@@ -371,6 +392,14 @@ export async function cerrarCajaHoy(): Promise<{ success: boolean; mensaje: stri
 
   if (error) return { success: false, mensaje: "Error al cerrar la caja" }
 
+  // Borrar ventas del día — la caja queda en cero para mañana
+  await db
+    .from("ventas")
+    .delete()
+    .eq("tenant_id", tenantId)
+    .gte("fecha", `${hoy}T00:00:00`)
+    .lte("fecha", `${hoy}T23:59:59`)
+
   return {
     success: true,
     mensaje: "Caja cerrada exitosamente",
@@ -433,4 +462,29 @@ export async function eliminarCierre(id: number): Promise<CierreCaja[]> {
 
   await supabase().from("cierres_caja").delete().eq("id", id).eq("tenant_id", tenantId)
   return getCierres()
+}
+
+export interface DatosEditarCierre {
+  totalVentas: number
+  totalCostos: number
+  totalGanancias: number
+  efectivo: number
+  transferencia: number
+}
+
+export async function editarCierre(id: number, datos: DatosEditarCierre): Promise<void> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return
+
+  await supabase()
+    .from("cierres_caja")
+    .update({
+      total_ventas: datos.totalVentas,
+      total_costos: datos.totalCostos,
+      total_ganancias: datos.totalGanancias,
+      efectivo: datos.efectivo,
+      transferencia: datos.transferencia,
+    })
+    .eq("id", id)
+    .eq("tenant_id", tenantId)
 }
