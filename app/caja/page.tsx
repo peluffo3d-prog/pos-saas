@@ -9,6 +9,7 @@ import {
 import {
   getCierres, cerrarCajaHoy, getTotalesMes, getTotalesHoy,
   getVentasHoy, eliminarCierre, editarCierre, editarVenta, eliminarVenta,
+  getCantidadProductosBajos,
   type CierreCaja, type Venta, type MetodoPago, type DatosEditarCierre,
 } from "@/lib/store"
 import * as XLSX from "xlsx"
@@ -42,6 +43,7 @@ export default function CajaPage() {
   })
   const [toast, setToast] = useState<{ mensaje: string; error: boolean } | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [stockBajos, setStockBajos] = useState(0)
 
   // Estado de edición de ventas del día
   const [editVenta, setEditVenta] = useState<EditVentaState | null>(null)
@@ -50,15 +52,17 @@ export default function CajaPage() {
   const [editCierre, setEditCierre] = useState<EditCierreState | null>(null)
 
   const cargarDatos = useCallback(async () => {
-    const [c, vHoy, totHoy, totMes] = await Promise.all([
+    const [c, vHoy, totHoy, totMes, bajos] = await Promise.all([
       getCierres(),
       getVentasHoy(),
       getTotalesHoy(),
       getTotalesMes(mesActual, anioActual),
+      getCantidadProductosBajos(),
     ])
     setCierres(c)
     setVentasHoy(vHoy)
     setTotalesHoy(totHoy)
+    setStockBajos(bajos)
     setTotalesMes(totMes)
   }, [mesActual, anioActual])
 
@@ -237,7 +241,12 @@ export default function CajaPage() {
         <div className="absolute left-0 top-14 w-64 bg-card border border-border rounded-xl shadow-2xl z-40">
           <nav className="flex flex-col py-2">
             <a href="/" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors"><Home className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Inicio</span></a>
-            <a href="/stock" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors"><Package className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Stock</span></a>
+            <a href="/stock" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors">
+              <Package className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Stock</span>
+              {stockBajos > 0 && (
+                <span className="ml-auto bg-destructive text-destructive-foreground text-xs font-bold px-2 py-0.5 rounded-full">{stockBajos}</span>
+              )}
+            </a>
             <a href="/ventas" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors"><BarChart3 className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Ventas</span></a>
           </nav>
         </div>

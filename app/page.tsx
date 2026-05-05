@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Search, Package, BarChart3, Minus, Plus, Trash2, Menu, X, Wallet, LogOut, Printer, MessageCircle } from "lucide-react"
-import { buscarProductos, realizarVenta, getTotalesHoy, getNombreComercio, type StockItem, type MetodoPago, type DatosPago } from "@/lib/store"
+import { buscarProductos, realizarVenta, getTotalesHoy, getNombreComercio, getCantidadProductosBajos, type StockItem, type MetodoPago, type DatosPago } from "@/lib/store"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 
@@ -29,6 +29,7 @@ export default function Home() {
   const [modalTicketOpen, setModalTicketOpen] = useState(false)
   const [ticketData, setTicketData] = useState<{ items: CarritoItem[]; total: number; metodo: MetodoPago; efectivo: number; transferencia: number; fecha: string } | null>(null)
   const [nombreComercio, setNombreComercio] = useState("")
+  const [stockBajos, setStockBajos] = useState(0)
   const router = useRouter()
   const supabase = createClient()
 
@@ -38,7 +39,11 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    Promise.all([refreshTotales(), getNombreComercio().then(setNombreComercio)]).then(() => setMounted(true))
+    Promise.all([
+      refreshTotales(),
+      getNombreComercio().then(setNombreComercio),
+      getCantidadProductosBajos().then(setStockBajos),
+    ]).then(() => setMounted(true))
   }, [refreshTotales])
 
   useEffect(() => {
@@ -246,6 +251,9 @@ export default function Home() {
             <a href="/stock" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors">
               <Package className="h-5 w-5 text-muted-foreground" />
               <span className="font-medium">Stock</span>
+              {stockBajos > 0 && (
+                <span className="ml-auto bg-destructive text-destructive-foreground text-xs font-bold px-2 py-0.5 rounded-full">{stockBajos}</span>
+              )}
             </a>
             <a href="/ventas" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors">
               <BarChart3 className="h-5 w-5 text-muted-foreground" />

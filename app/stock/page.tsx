@@ -1,9 +1,9 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Plus, Package, Trash2, Minus, Menu, X, BarChart3, Home, Download, Wallet } from "lucide-react"
+import { Plus, Package, Trash2, Minus, Menu, X, BarChart3, Home, Download, Wallet, AlertTriangle } from "lucide-react"
 import * as XLSX from "xlsx"
-import { getStock, eliminarProductoStock, ajustarCantidadStock, agregarProductoStock, type StockItem } from "@/lib/store"
+import { getStock, eliminarProductoStock, ajustarCantidadStock, agregarProductoStock, getCantidadProductosBajos, type StockItem } from "@/lib/store"
 
 export default function StockPage() {
   const [producto, setProducto] = useState("")
@@ -15,10 +15,12 @@ export default function StockPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [stockBajos, setStockBajos] = useState(0)
 
   const cargarStock = useCallback(async () => {
     const data = await getStock()
     setHistorial(data)
+    setStockBajos(data.filter((p) => p.cantidad <= 5).length)
   }, [])
 
   useEffect(() => {
@@ -150,6 +152,22 @@ export default function StockPage() {
         <button onClick={() => setSheetOpen(true)} className="bg-primary text-primary-foreground px-6 py-3 rounded-xl text-sm font-bold flex items-center gap-2 mb-6 hover:opacity-90 transition-opacity">
           <Plus className="w-4 h-4" />Agregar producto
         </button>
+
+        {stockBajos > 0 && (
+          <div className="w-full max-w-xl mb-4 flex items-start gap-3 bg-warning/10 border border-warning/30 rounded-xl px-4 py-3">
+            <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-warning">
+                {stockBajos} producto{stockBajos > 1 ? "s" : ""} con stock bajo
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {historial.filter((p) => p.cantidad <= 5).map((p) =>
+                  p.cantidad === 0 ? `${p.producto} (agotado)` : `${p.producto} (${p.cantidad} uds)`
+                ).join(" · ")}
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="w-full max-w-xl">
           {historial.length === 0 ? (

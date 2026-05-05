@@ -11,12 +11,14 @@ export default function VentasPage() {
   const [valorStock, setValorStock] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [stockBajos, setStockBajos] = useState(0)
 
   const cargarDatos = useCallback(async () => {
     const [v, totales, stock] = await Promise.all([getVentas(), getTotalesHoy(), getStock()])
     setVentas(v)
     setTotalesHoy(totales)
     setValorStock(stock.reduce((acc, item) => acc + item.precioVenta * item.cantidad, 0))
+    setStockBajos(stock.filter((p) => p.cantidad <= 5).length)
   }, [])
 
   useEffect(() => {
@@ -83,6 +85,9 @@ export default function VentasPage() {
             </a>
             <a href="/stock" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors">
               <Package className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Stock</span>
+              {stockBajos > 0 && (
+                <span className="ml-auto bg-destructive text-destructive-foreground text-xs font-bold px-2 py-0.5 rounded-full">{stockBajos}</span>
+              )}
             </a>
             <a href="/caja" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors">
               <Wallet className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Caja</span>
