@@ -71,6 +71,19 @@ function todayDateStr(): string {
   return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`
 }
 
+export async function getNombreComercio(): Promise<string> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return ""
+
+  const { data } = await supabase()
+    .from("tenants")
+    .select("nombre")
+    .eq("id", tenantId)
+    .single()
+
+  return data?.nombre ?? ""
+}
+
 // ─── Stock ──────────────────────────────────────────────────────────────────
 
 export async function getStock(): Promise<StockItem[]> {

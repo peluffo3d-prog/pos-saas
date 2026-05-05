@@ -103,3 +103,19 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media print {
+  body > * { display: none !important; }
+  #ticket-impresion { display: block !important; }
+  #ticket-impresion {
+    position: fixed;
+    inset: 0;
+    background: white;
+    color: black;
+    font-family: monospace;
+    font-size: 13px;
+    padding: 16px;
+    width: 58mm;
+    margin: 0 auto;
+  }
+}

@@ -1,8 +1,8 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Search, Package, BarChart3, Minus, Plus, Trash2, Menu, X, Wallet, LogOut } from "lucide-react"
-import { buscarProductos, realizarVenta, getTotalesHoy, type StockItem, type MetodoPago, type DatosPago } from "@/lib/store"
+import { Search, Package, BarChart3, Minus, Plus, Trash2, Menu, X, Wallet, LogOut, Printer, MessageCircle } from "lucide-react"
+import { buscarProductos, realizarVenta, getTotalesHoy, getNombreComercio, type StockItem, type MetodoPago, type DatosPago } from "@/lib/store"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 
@@ -26,6 +26,9 @@ export default function Home() {
   const [metodoPago, setMetodoPago] = useState<MetodoPago>("efectivo")
   const [montoEfectivo, setMontoEfectivo] = useState(0)
   const [montoTransferencia, setMontoTransferencia] = useState(0)
+  const [modalTicketOpen, setModalTicketOpen] = useState(false)
+  const [ticketData, setTicketData] = useState<{ items: CarritoItem[]; total: number; metodo: MetodoPago; efectivo: number; transferencia: number; fecha: string } | null>(null)
+  const [nombreComercio, setNombreComercio] = useState("")
   const router = useRouter()
   const supabase = createClient()
 
@@ -35,7 +38,7 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    refreshTotales().then(() => setMounted(true))
+    Promise.all([refreshTotales(), getNombreComercio().then(setNombreComercio)]).then(() => setMounted(true))
   }, [refreshTotales])
 
   useEffect(() => {
@@ -164,8 +167,18 @@ export default function Home() {
     }
 
     await refreshTotales()
-    const metodoPagoTexto = metodoPago === "efectivo" ? "Efectivo" : metodoPago === "transferencia" ? "Transferencia" : "Mixto"
-    mostrarToast(`Venta realizada: $${totalCarrito.toLocaleString("es-AR")} - ${metodoPagoTexto}`)
+
+    const ahora = new Date()
+    const fechaStr = ahora.toLocaleDateString("es-AR") + " " + ahora.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
+    setTicketData({
+      items: [...carrito],
+      total: totalCarrito,
+      metodo: metodoPago,
+      efectivo: montoEfectivo,
+      transferencia: montoTransferencia,
+      fecha: fechaStr,
+    })
+    setModalTicketOpen(true)
     setCarrito([])
     setModalPagoOpen(false)
   }
@@ -173,6 +186,33 @@ export default function Home() {
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push("/login")
+  }
+
+  const generarTextoTicket = () => {
+    if (!ticketData) return ""
+    const linea = "─".repeat(32)
+    const items = ticketData.items.map((i) => {
+      const nombre = i.producto.producto.substring(0, 20).padEnd(20)
+      const precio = `$${(i.producto.precioVenta * i.cantidad).toLocaleString("es-AR")}`
+      return `${nombre} x${i.cantidad}  ${precio}`
+    }).join("\n")
+
+    const metodoPagoTexto =
+      ticketData.metodo === "efectivo" ? "Efectivo" :
+      ticketData.metodo === "transferencia" ? "Transferencia" :
+      `Mixto: Ef $${ticketData.efectivo.toLocaleString("es-AR")} / Tr $${ticketData.transferencia.toLocaleString("es-AR")}`
+
+    return `${nombreComercio || "POS SaaS"}\n${ticketData.fecha}\n${linea}\n${items}\n${linea}\nTOTAL: $${ticketData.total.toLocaleString("es-AR")}\nPago: ${metodoPagoTexto}\n${linea}\nGracias por su compra!`
+  }
+
+  const handleImprimir = () => {
+    window.print()
+  }
+
+  const handleWhatsApp = () => {
+    const texto = generarTextoTicket()
+    const url = `https://wa.me/?text=${encodeURIComponent(texto)}`
+    window.open(url, "_blank")
   }
 
   const getBadgeStock = (cantidad: number) => {
@@ -408,6 +448,79 @@ export default function Home() {
       {toast && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 px-5 py-3 rounded-xl shadow-2xl z-50 font-semibold ${toast.error ? "bg-card text-foreground border border-destructive" : "bg-card text-foreground border border-success"}`}>
           {toast.mensaje}
+        </div>
+      )}
+
+      {/* Modal ticket */}
+      {modalTicketOpen && ticketData && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <p className="text-xl font-bold text-center text-foreground mb-1">Ticket de venta</p>
+            <p className="text-xs text-muted-foreground text-center mb-4">{ticketData.fecha}</p>
+
+            <div className="bg-secondary rounded-xl p-4 font-mono text-sm text-foreground mb-4 space-y-1">
+              <p className="font-bold text-center text-base mb-2">{nombreComercio || "Mi Comercio"}</p>
+              <div className="border-t border-border my-2" />
+              {ticketData.items.map((item) => (
+                <div key={item.producto.id} className="flex justify-between">
+                  <span className="truncate max-w-[55%]">{item.producto.producto} x{item.cantidad}</span>
+                  <span className="font-semibold">${(item.producto.precioVenta * item.cantidad).toLocaleString("es-AR")}</span>
+                </div>
+              ))}
+              <div className="border-t border-border my-2" />
+              <div className="flex justify-between font-bold text-success">
+                <span>TOTAL</span>
+                <span>${ticketData.total.toLocaleString("es-AR")}</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Pago:{" "}
+                {ticketData.metodo === "efectivo" ? "Efectivo" :
+                 ticketData.metodo === "transferencia" ? "Transferencia" :
+                 `Mixto — Ef $${ticketData.efectivo.toLocaleString("es-AR")} / Tr $${ticketData.transferencia.toLocaleString("es-AR")}`}
+              </p>
+            </div>
+
+            <div className="flex gap-3 mb-3">
+              <button onClick={handleImprimir} className="flex-1 flex items-center justify-center gap-2 border border-border text-foreground font-semibold py-3 rounded-xl hover:bg-secondary transition-colors">
+                <Printer className="w-4 h-4" />
+                Imprimir
+              </button>
+              <button onClick={handleWhatsApp} className="flex-1 flex items-center justify-center gap-2 bg-[#25D366] text-white font-semibold py-3 rounded-xl hover:opacity-90 transition-opacity">
+                <MessageCircle className="w-4 h-4" />
+                WhatsApp
+              </button>
+            </div>
+            <button onClick={() => setModalTicketOpen(false)} className="w-full border border-border text-muted-foreground font-medium py-3 rounded-xl hover:bg-secondary transition-colors">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Div oculto para impresión */}
+      {ticketData && (
+        <div id="ticket-impresion" style={{ display: "none" }}>
+          <p style={{ fontWeight: "bold", textAlign: "center", fontSize: "15px" }}>{nombreComercio || "Mi Comercio"}</p>
+          <p style={{ textAlign: "center", marginBottom: "8px" }}>{ticketData.fecha}</p>
+          <p>{"─".repeat(28)}</p>
+          {ticketData.items.map((item) => (
+            <div key={item.producto.id} style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>{item.producto.producto} x{item.cantidad}</span>
+              <span>${(item.producto.precioVenta * item.cantidad).toLocaleString("es-AR")}</span>
+            </div>
+          ))}
+          <p>{"─".repeat(28)}</p>
+          <div style={{ display: "flex", justifyContent: "space-between", fontWeight: "bold" }}>
+            <span>TOTAL</span>
+            <span>${ticketData.total.toLocaleString("es-AR")}</span>
+          </div>
+          <p style={{ marginTop: "4px", fontSize: "12px" }}>
+            Pago:{" "}
+            {ticketData.metodo === "efectivo" ? "Efectivo" :
+             ticketData.metodo === "transferencia" ? "Transferencia" :
+             `Mixto — Ef $${ticketData.efectivo.toLocaleString("es-AR")} / Tr $${ticketData.transferencia.toLocaleString("es-AR")}`}
+          </p>
+          <p style={{ textAlign: "center", marginTop: "12px" }}>Gracias por su compra!</p>
         </div>
       )}
     </main>
