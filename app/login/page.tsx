@@ -4,11 +4,13 @@ import { useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { ShoppingCart } from "lucide-react"
+import { entrarComoDemo } from "@/lib/demo"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
+  const [demoLoading, setDemoLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
@@ -26,6 +28,19 @@ export default function LoginPage() {
       return
     }
 
+    router.push("/")
+    router.refresh()
+  }
+
+  const handleDemo = async () => {
+    setDemoLoading(true)
+    setError(null)
+    const { ok, error } = await entrarComoDemo()
+    if (!ok) {
+      setError(error ?? "Error al entrar al demo")
+      setDemoLoading(false)
+      return
+    }
     router.push("/")
     router.refresh()
   }
@@ -84,6 +99,24 @@ export default function LoginPage() {
             {loading ? "Ingresando..." : "INGRESAR"}
           </button>
         </form>
+
+        <div className="relative my-6">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-border" />
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-background px-3 text-muted-foreground">o</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleDemo}
+          disabled={demoLoading}
+          className="w-full border border-border text-foreground font-semibold py-4 rounded-xl hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {demoLoading ? "Cargando demo..." : "Probar sin cuenta →"}
+        </button>
 
         <p className="text-center text-sm text-muted-foreground mt-6">
           ¿No tenés cuenta?{" "}
