@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/client"
 
 const DEMO_EMAIL = "demo@possaas.app"
-const DEMO_PASS  = "DemoPos2026!"
+const DEMO_PASS = "DemoPos2026!"
 const DEMO_STOCK = [
   { producto:"Coca Cola 500ml",      cantidad:24, precio_costo:800,  precio_venta:1400 },
   { producto:"Agua mineral 500ml",   cantidad:30, precio_costo:350,  precio_venta:700  },
@@ -23,14 +23,18 @@ export async function entrarComoDemo(): Promise<{ ok: boolean; error?: string }>
   })
 
   if (loginErr) {
-    // 2. Si no existe, crearla
+    // 2. Si no existe, intentar crearla
     const { error: signupErr } = await db.auth.signUp({
       email: DEMO_EMAIL,
       password: DEMO_PASS,
     })
-    if (signupErr) return { ok: false, error: signupErr.message }
 
-    // Volver a loguearse después del signup
+    // Si el signup falla por razón distinta a "ya existe", retornar error
+    if (signupErr && !signupErr.message.toLowerCase().includes("already")) {
+      return { ok: false, error: signupErr.message }
+    }
+
+    // Volver a loguearse (ya sea que se creó o ya existía)
     const { error: reloginErr } = await db.auth.signInWithPassword({
       email: DEMO_EMAIL,
       password: DEMO_PASS,
@@ -57,7 +61,7 @@ export async function entrarComoDemo(): Promise<{ ok: boolean; error?: string }>
     .select()
     .single()
 
-  if (tenantErr || !tenant) return { ok: false, error: "Error creando tenant demo" }
+  if (tenantErr || !tenant) return { ok: false, error: "Error creando tenant demo: " + tenantErr?.message }
 
   await db.from("tenant_users").insert({
     user_id: user.id,
