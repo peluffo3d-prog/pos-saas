@@ -1,9 +1,10 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Plus, Package, Trash2, Minus, Menu, X, BarChart3, Home, Download, Wallet } from "lucide-react"
+import { Plus, Trash2, Minus, Download, X, Loader2, TrendingUp } from "lucide-react"
 import * as XLSX from "xlsx"
 import { getStock, eliminarProductoStock, ajustarCantidadStock, agregarProductoStock, type StockItem } from "@/lib/store"
+import { AppShell } from "@/components/app-shell"
 
 export default function StockPage() {
   const [producto, setProducto] = useState("")
@@ -13,7 +14,6 @@ export default function StockPage() {
   const [historial, setHistorial] = useState<StockItem[]>([])
   const [sheetOpen, setSheetOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
 
   const cargarStock = useCallback(async () => {
@@ -58,19 +58,23 @@ export default function StockPage() {
     if (!item) return
     const nuevaCantidad = Math.max(0, item.cantidad + delta)
     await ajustarCantidadStock(id, nuevaCantidad)
-    setHistorial((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, cantidad: nuevaCantidad } : i))
-    )
+    setHistorial((prev) => prev.map((i) => (i.id === id ? { ...i, cantidad: nuevaCantidad } : i)))
   }
 
-  const getBadgeStock = (cantidad: number) => {
-    if (cantidad <= 0) return { clase: "bg-destructive/20 text-destructive", texto: "Agotado" }
-    if (cantidad <= 5) return { clase: "bg-warning/20 text-warning", texto: "Bajo" }
-    return { clase: "bg-success/20 text-success", texto: "OK" }
+  const getBorderColor = (cantidad: number) => {
+    if (cantidad <= 0) return "border-l-destructive"
+    if (cantidad <= 5) return "border-l-warning"
+    return "border-l-accent"
+  }
+
+  const getMargen = (costo: number, venta: number) => {
+    if (venta <= 0) return 0
+    return Math.round(((venta - costo) / venta) * 100)
   }
 
   const valorTotalStock = historial.reduce((acc, item) => acc + item.precioVenta * item.cantidad, 0)
   const costoTotalStock = historial.reduce((acc, item) => acc + item.precioCosto * item.cantidad, 0)
+  const margenPromedio = valorTotalStock > 0 ? Math.round(((valorTotalStock - costoTotalStock) / valorTotalStock) * 100) : 0
 
   const exportarExcel = () => {
     const datosExcel = historial.map((item) => ({
@@ -101,117 +105,135 @@ export default function StockPage() {
 
   if (!mounted) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-background">
-        <p className="text-muted-foreground">Cargando...</p>
-      </main>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="w-6 h-6 text-accent animate-spin" />
+      </div>
     )
   }
 
   return (
-    <main className="flex flex-col min-h-screen bg-background">
-      <button onClick={() => setMenuOpen(!menuOpen)} className="absolute left-4 top-4 p-2 rounded-lg hover:bg-secondary transition-colors z-50" aria-label="Abrir menu">
-        {menuOpen ? <X className="h-6 w-6 text-foreground" /> : <Menu className="h-6 w-6 text-foreground" />}
-      </button>
-
-      {menuOpen && (
-        <div className="absolute left-0 top-14 w-64 bg-card border border-border rounded-xl shadow-2xl z-40">
-          <nav className="flex flex-col py-2">
-            <a href="/" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors">
-              <Home className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Inicio</span>
-            </a>
-            <a href="/ventas" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors">
-              <BarChart3 className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Ventas</span>
-            </a>
-            <a href="/caja" className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-secondary transition-colors">
-              <Wallet className="h-5 w-5 text-muted-foreground" /><span className="font-medium">Caja</span>
-            </a>
-          </nav>
+    <AppShell>
+      {/* Header */}
+      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between max-w-xl mx-auto">
+          <h1 className="font-display font-bold text-foreground text-lg">Stock</h1>
+          <div className="flex items-center gap-2">
+            {historial.length > 0 && (
+              <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-secondary hover:bg-border text-foreground px-3 py-2 rounded-xl text-xs font-semibold transition-colors">
+                <Download className="w-3.5 h-3.5" />Excel
+              </button>
+            )}
+            <button onClick={() => setSheetOpen(true)} className="flex items-center gap-1.5 bg-accent text-accent-foreground px-3 py-2 rounded-xl text-xs font-bold hover:opacity-90 active:scale-95 transition-all">
+              <Plus className="w-3.5 h-3.5" />Agregar
+            </button>
+          </div>
         </div>
-      )}
-
-      <div className="absolute right-4 top-4 bg-info text-info-foreground rounded-xl px-4 py-2 text-center min-w-[90px] shadow-lg">
-        <p className="text-xs uppercase opacity-80 tracking-wide">Valor</p>
-        <p className="text-lg font-bold">${valorTotalStock.toLocaleString("es-AR")}</p>
       </div>
 
-      <div className="flex-1 flex flex-col items-center px-4 py-20">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="flex items-center gap-2">
-            <Package className="h-6 w-6 text-foreground" />
-            <h1 className="text-2xl font-bold text-foreground">Stock</h1>
+      <div className="px-4 pt-4 max-w-xl mx-auto w-full">
+        {/* Summary bar */}
+        {historial.length > 0 && (
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-card border border-border rounded-xl p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{historial.length}</p>
+              <p className="text-[10px] uppercase text-muted-foreground font-semibold tracking-wide mt-0.5">Productos</p>
+            </div>
+            <div className="bg-card border border-border rounded-xl p-3 text-center">
+              <p className="text-lg font-bold text-accent">${valorTotalStock.toLocaleString("es-AR")}</p>
+              <p className="text-[10px] uppercase text-muted-foreground font-semibold tracking-wide mt-0.5">Valor stock</p>
+            </div>
+            <div className="bg-card border border-border rounded-xl p-3 text-center">
+              <div className="flex items-center justify-center gap-1">
+                <TrendingUp className="w-3.5 h-3.5 text-accent" />
+                <p className="text-lg font-bold text-accent">{margenPromedio}%</p>
+              </div>
+              <p className="text-[10px] uppercase text-muted-foreground font-semibold tracking-wide mt-0.5">Margen</p>
+            </div>
           </div>
-          {historial.length > 0 && (
-            <button onClick={exportarExcel} className="flex items-center gap-2 bg-secondary hover:bg-border text-foreground px-4 py-2 rounded-xl text-sm font-medium transition-colors">
-              <Download className="w-4 h-4" />Excel
+        )}
+
+        {/* Stock list */}
+        {historial.length === 0 ? (
+          <div className="text-center py-14">
+            <div className="w-16 h-16 bg-secondary rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Plus className="w-7 h-7 text-muted-foreground/50" />
+            </div>
+            <p className="text-muted-foreground text-sm mb-3">No hay productos en stock</p>
+            <button onClick={() => setSheetOpen(true)} className="bg-accent text-accent-foreground px-5 py-2.5 rounded-xl text-sm font-bold hover:opacity-90 transition-opacity">
+              Agregar primer producto
             </button>
-          )}
-        </div>
-
-        <button onClick={() => setSheetOpen(true)} className="bg-primary text-primary-foreground px-6 py-3 rounded-xl text-sm font-bold flex items-center gap-2 mb-6 hover:opacity-90 transition-opacity">
-          <Plus className="w-4 h-4" />Agregar producto
-        </button>
-
-        <div className="w-full max-w-xl">
-          {historial.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">Sin productos en stock</p>
-          ) : (
-            <div className="space-y-3">
-              {historial.map((item) => {
-                const badge = getBadgeStock(item.cantidad)
-                return (
-                  <div key={item.id} className="bg-card border border-border rounded-xl p-4">
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <p className="font-bold text-foreground">{item.producto}</p>
-                        <p className="text-sm text-muted-foreground">Costo: ${item.precioCosto.toLocaleString("es-AR")} | Venta: ${item.precioVenta.toLocaleString("es-AR")}</p>
+          </div>
+        ) : (
+          <div className="space-y-3 pb-4">
+            {historial.map((item) => {
+              const margen = getMargen(item.precioCosto, item.precioVenta)
+              return (
+                <div
+                  key={item.id}
+                  className={`bg-card border border-border border-l-4 ${getBorderColor(item.cantidad)} rounded-xl p-4`}
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex-1 min-w-0 pr-3">
+                      <p className="font-bold text-foreground text-sm truncate">{item.producto}</p>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-xs text-muted-foreground">
+                          Costo ${item.precioCosto.toLocaleString("es-AR")}
+                        </span>
+                        <span className="text-xs text-foreground font-semibold">
+                          Venta ${item.precioVenta.toLocaleString("es-AR")}
+                        </span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${margen >= 30 ? "bg-accent/20 text-accent" : margen >= 15 ? "bg-warning/20 text-warning" : "bg-destructive/20 text-destructive"}`}>
+                          {margen}% margen
+                        </span>
                       </div>
-                      <span className={`text-xs px-2 py-1 rounded-full font-semibold ${badge.clase}`}>{badge.texto}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => ajustarStock(item.id, -1)} className="w-8 h-8 bg-secondary border border-border rounded-lg flex items-center justify-center font-bold hover:bg-border transition-colors">
-                          <Minus className="w-4 h-4 text-foreground" />
-                        </button>
-                        <span className="font-bold text-lg min-w-[32px] text-center text-foreground">{item.cantidad}</span>
-                        <button onClick={() => ajustarStock(item.id, 1)} className="w-8 h-8 bg-secondary border border-border rounded-lg flex items-center justify-center font-bold hover:bg-border transition-colors">
-                          <Plus className="w-4 h-4 text-foreground" />
-                        </button>
-                      </div>
-                      <button onClick={() => eliminarItem(item.id)} className="text-muted-foreground hover:text-destructive p-2 transition-colors">
-                        <Trash2 className="w-5 h-5" />
-                      </button>
                     </div>
                   </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => ajustarStock(item.id, -1)} className="w-8 h-8 bg-secondary border border-border rounded-lg flex items-center justify-center hover:bg-border transition-colors active:scale-95">
+                        <Minus className="w-4 h-4 text-foreground" />
+                      </button>
+                      <span className="font-bold text-lg min-w-[32px] text-center text-foreground">{item.cantidad}</span>
+                      <button onClick={() => ajustarStock(item.id, 1)} className="w-8 h-8 bg-secondary border border-border rounded-lg flex items-center justify-center hover:bg-border transition-colors active:scale-95">
+                        <Plus className="w-4 h-4 text-foreground" />
+                      </button>
+                      <span className="text-xs text-muted-foreground ml-1">unidades</span>
+                    </div>
+                    <button onClick={() => eliminarItem(item.id)} className="text-muted-foreground hover:text-destructive p-2 transition-colors">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
+      {/* Bottom sheet agregar producto */}
       {sheetOpen && (
-        <div className="fixed inset-0 bg-black/70 flex items-end z-50" onClick={(e) => e.target === e.currentTarget && setSheetOpen(false)}>
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end z-50" onClick={(e) => e.target === e.currentTarget && setSheetOpen(false)}>
           <div className="bg-card border-t border-border w-full rounded-t-2xl p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-5">
-              <h2 className="text-lg font-bold text-foreground">Agregar producto</h2>
+              <h2 className="font-display text-lg font-bold text-foreground">Agregar producto</h2>
               <button onClick={() => setSheetOpen(false)} className="w-8 h-8 bg-secondary rounded-full flex items-center justify-center text-muted-foreground hover:bg-border transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="space-y-4">
               {[
-                { label: "Nombre", value: producto, setter: setProducto, type: "text", placeholder: "Ej: Coca 2L", autoComplete: "off" },
+                { label: "Nombre del producto", value: producto, setter: setProducto, type: "text", placeholder: "Ej: Coca Cola 500ml", autoComplete: "off" },
                 { label: "Precio de venta", value: precioVenta, setter: setPrecioVenta, type: "number", placeholder: "0" },
                 { label: "Costo unitario", value: precioCosto, setter: setPrecioCosto, type: "number", placeholder: "0" },
                 { label: "Stock inicial", value: cantidad, setter: setCantidad, type: "number", placeholder: "0" },
               ].map(({ label, value, setter, type, placeholder, autoComplete }) => (
                 <div key={label}>
-                  <label className="block text-xs font-semibold uppercase text-muted-foreground mb-1 tracking-wide">{label}</label>
+                  <label className="block text-[11px] font-bold uppercase text-muted-foreground mb-2 tracking-widest">{label}</label>
                   <input
                     type={type}
                     value={value}
                     onChange={(e) => setter(e.target.value)}
-                    className="w-full border border-border bg-muted text-foreground rounded-xl px-4 py-3 focus:border-accent focus:ring-1 focus:ring-accent outline-none transition-colors"
+                    className="w-full border border-border bg-secondary text-foreground rounded-xl px-4 py-3 focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all placeholder:text-muted-foreground/50 text-sm"
                     placeholder={placeholder}
                     autoComplete={autoComplete}
                     min={type === "number" ? "0" : undefined}
@@ -219,10 +241,19 @@ export default function StockPage() {
                   />
                 </div>
               ))}
+
+              {/* Margin preview */}
+              {precioCosto && precioVenta && Number(precioVenta) > 0 && (
+                <div className="bg-accent/10 border border-accent/20 rounded-xl px-4 py-3 flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Margen calculado</span>
+                  <span className="text-accent font-bold">{getMargen(Number(precioCosto), Number(precioVenta))}%</span>
+                </div>
+              )}
+
               <button
                 onClick={agregarStock}
                 disabled={!producto.trim() || !cantidad.trim() || !precioCosto.trim() || !precioVenta.trim()}
-                className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
+                className="w-full bg-accent text-accent-foreground font-bold py-3.5 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 active:scale-[0.98] transition-all text-sm"
               >
                 Guardar producto
               </button>
@@ -231,11 +262,12 @@ export default function StockPage() {
         </div>
       )}
 
+      {/* Toast */}
       {toast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-card text-foreground border border-success px-5 py-3 rounded-xl shadow-2xl z-50 font-semibold">
+        <div className="fixed bottom-24 right-4 bg-card text-foreground border border-accent px-4 py-3 rounded-xl shadow-2xl z-50 font-semibold text-sm">
           {toast}
         </div>
       )}
-    </main>
+    </AppShell>
   )
 }
