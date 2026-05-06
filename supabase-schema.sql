@@ -107,3 +107,7 @@ CREATE INDEX idx_stock_tenant ON stock(tenant_id);
 CREATE INDEX idx_ventas_tenant_fecha ON ventas(tenant_id, fecha);
 CREATE INDEX idx_cierres_tenant_fecha ON cierres_caja(tenant_id, fecha);
 CREATE INDEX idx_tenant_users_user ON tenant_users(user_id);
+
+-- Fix RLS: permitir INSERT en tenants a usuarios autenticados
+CREATE POLICY "insertar tenant propio" ON tenants
+  FOR INSERT TO authenticated WITH CHECK (true);

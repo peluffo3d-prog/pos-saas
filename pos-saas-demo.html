@@ -66,6 +66,12 @@ button{font-family:inherit;cursor:pointer}
 /* Sidebar menu */
 .sidebar{position:absolute;left:0;top:56px;width:240px;background:var(--card);border:1px solid var(--border);border-radius:0 var(--radius-lg) var(--radius-lg) 0;box-shadow:4px 4px 24px rgba(0,0,0,.4);z-index:200}
 .sidebar nav a,.sidebar nav button{display:flex;align-items:center;gap:12px;padding:13px 20px;color:var(--fg);text-decoration:none;font-weight:500;font-size:15px;background:none;border:none;width:100%;text-align:left;transition:background .15s;cursor:pointer}
+.stock-badge{background:var(--destructive);color:#fff;font-size:11px;font-weight:700;border-radius:99px;padding:2px 7px;margin-left:auto}
+.stock-alert{display:flex;align-items:flex-start;gap:10px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
+.stock-alert-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.stock-alert-body{flex:1;min-width:0}
+.stock-alert-title{font-weight:700;color:var(--warning);font-size:14px;margin-bottom:4px}
+.stock-alert-items{font-size:13px;color:var(--muted);line-height:1.6}
 .sidebar nav a:hover,.sidebar nav button:hover{background:var(--secondary)}
 .sidebar nav .icon{font-size:18px;opacity:.7;width:22px;text-align:center}
 
@@ -313,7 +319,7 @@ svg.donut{overflow:visible}
   <div id="sidebar" class="sidebar hidden">
     <nav>
       <a href="#" onclick="showPage('p-pos');closeSidebar();return false"><span class="icon">🏠</span>Inicio</a>
-      <a href="#" onclick="showPage('p-stock');closeSidebar();return false"><span class="icon">📦</span>Stock</a>
+      <a href="#" onclick="showPage('p-stock');closeSidebar();return false"><span class="icon">📦</span>Stock<span id="sidebar-stock-badge" class="stock-badge hidden"></span></a>
       <a href="#" onclick="showPage('p-ventas');closeSidebar();return false"><span class="icon">📊</span>Ventas</a>
       <a href="#" onclick="showPage('p-caja');closeSidebar();return false"><span class="icon">💰</span>Caja</a>
       <button onclick="goTo('s-login');showToast('Sesión cerrada')"><span class="icon">🚪</span>Cerrar sesión</button>
@@ -359,6 +365,7 @@ svg.donut{overflow:visible}
         <div class="page-title"><span>📦</span>Stock</div>
         <button class="excel-btn"><span>📥</span>Excel</button>
       </div>
+      <div id="stock-alert-banner"></div>
       <button class="fab" onclick="openAddStock()"><span>＋</span>Agregar producto</button>
       <div id="stock-list"></div>
     </div>
@@ -512,6 +519,28 @@ svg.donut{overflow:visible}
       <button class="modal-btn" style="background:var(--primary);color:var(--primary-fg)" onclick="confirmarCierre()">CONFIRMAR</button>
       <button class="modal-btn ghost" onclick="closeModal('m-cierre')">Cancelar</button>
     </div>
+  </div>
+</div>
+
+<!-- ════ MODAL TICKET ════ -->
+<div id="m-ticket" class="overlay hidden" onclick="if(event.target===this)closeModal('m-ticket')">
+  <div class="modal">
+    <p class="modal-title">Ticket de venta</p>
+    <div style="background:var(--secondary);border-radius:var(--radius);padding:16px;font-size:14px;margin-bottom:16px">
+      <p id="ticket-comercio" style="font-weight:700;text-align:center;font-size:15px;margin-bottom:4px"></p>
+      <p id="ticket-fecha" style="text-align:center;color:var(--muted);font-size:12px;margin-bottom:12px"></p>
+      <div id="ticket-items"></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700;margin-top:12px;padding-top:8px;border-top:1px solid var(--border)">
+        <span style="color:var(--success)">TOTAL</span>
+        <span id="ticket-total" style="color:var(--success)"></span>
+      </div>
+      <p id="ticket-metodo" style="color:var(--muted);font-size:12px;margin-top:6px"></p>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:10px">
+      <button class="modal-btn ghost" onclick="imprimirTicket()" style="display:flex;align-items:center;justify-content:center;gap:6px">🖨️ Imprimir</button>
+      <button onclick="enviarWhatsApp()" style="flex:1;background:#25D366;color:#fff;border:none;border-radius:var(--radius);padding:16px;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;transition:opacity .2s" onmouseover="this.style.opacity='.88'" onmouseout="this.style.opacity='1'">💬 WhatsApp</button>
+    </div>
+    <button class="modal-btn ghost" onclick="closeModal('m-ticket')">Cerrar</button>
   </div>
 </div>
 
@@ -742,6 +771,7 @@ function confirmPay(){
     montoTra=+document.getElementById('monto-tra').value||0
     if(montoEff+montoTra!==total){showToast('La suma no coincide con el total',true);return}
   }
+  const itemsTicket=[...carrito]
   carrito.forEach(item=>{
     const ganancia=(item.producto.precioVenta-item.producto.precioCosto)*item.cantidad
     ventasHoy.push({
@@ -754,18 +784,107 @@ function confirmPay(){
     const s=stock.find(p=>p.id===item.producto.id)
     if(s)s.cantidad-=item.cantidad
   })
-  const label=payMethod==='efectivo'?'Efectivo':payMethod==='transferencia'?'Transferencia':'Mixto'
-  showToast(`Venta $${fmt(total)} — ${label}`)
   carrito=[]
   renderCart()
   closeModal('m-pay')
   updateTopbarBadge('p-pos')
+  updateStockAlerts()
+  openTicket(itemsTicket,total,payMethod,montoEff,montoTra)
+}
+
+function openTicket(items,total,metodo,eff,tra){
+  const comercio=document.getElementById('comercio-name')?.value||'Mi Comercio'
+  const ahora=new Date()
+  const fecha=ahora.toLocaleDateString('es-AR')+' '+ahora.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})
+  const metodoPagoTexto=metodo==='efectivo'?'Efectivo':metodo==='transferencia'?'Transferencia':`Mixto — Ef $${fmt(eff)} / Tr $${fmt(tra)}`
+
+  // Modal visual
+  const lista=items.map(i=>`
+    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px">${i.producto.producto} x${i.cantidad}</span>
+      <span style="font-weight:700;color:var(--success);white-space:nowrap">$${fmt(i.producto.precioVenta*i.cantidad)}</span>
+    </div>`).join('')
+
+  document.getElementById('ticket-comercio').textContent=comercio
+  document.getElementById('ticket-fecha').textContent=fecha
+  document.getElementById('ticket-items').innerHTML=lista
+  document.getElementById('ticket-total').textContent='$'+fmt(total)
+  document.getElementById('ticket-metodo').textContent='Pago: '+metodoPagoTexto
+
+  // Guardar datos para imprimir/WA
+  window._ticketData={items,total,metodo,eff,tra,fecha,comercio}
+  document.getElementById('m-ticket').classList.remove('hidden')
+}
+
+function imprimirTicket(){
+  const d=window._ticketData
+  const linea='─'.repeat(32)
+  const comercio=d.comercio||'Mi Comercio'
+  const metodoPagoTexto=d.metodo==='efectivo'?'Efectivo':d.metodo==='transferencia'?'Transferencia':`Mixto — Ef $${fmt(d.eff)} / Tr $${fmt(d.tra)}`
+  const items=d.items.map(i=>{
+    const nombre=i.producto.producto.substring(0,18).padEnd(18)
+    return `${nombre} x${i.cantidad}  $${fmt(i.producto.precioVenta*i.cantidad)}`
+  }).join('\n')
+
+  const w=window.open('','_blank','width=320,height=500')
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <style>body{font-family:monospace;font-size:13px;padding:16px;width:58mm;color:#000;background:#fff}
+  .center{text-align:center}.bold{font-weight:bold}.muted{color:#555}</style></head><body>
+  <p class="center bold" style="font-size:15px">${comercio}</p>
+  <p class="center muted">${d.fecha}</p>
+  <pre>${linea}</pre>
+  <pre>${items}</pre>
+  <pre>${linea}</pre>
+  <p class="bold">TOTAL: $${fmt(d.total)}</p>
+  <p class="muted">${metodoPagoTexto}</p>
+  <pre>${linea}</pre>
+  <p class="center">Gracias por su compra!</p>
+  <script>window.onload=function(){window.print();window.close()}<\/script>
+  </body></html>`)
+  w.document.close()
+}
+
+function enviarWhatsApp(){
+  const d=window._ticketData
+  const linea='─'.repeat(32)
+  const comercio=d.comercio||'Mi Comercio'
+  const metodoPagoTexto=d.metodo==='efectivo'?'Efectivo':d.metodo==='transferencia'?'Transferencia':`Mixto — Ef $${fmt(d.eff)} / Tr $${fmt(d.tra)}`
+  const items=d.items.map(i=>`${i.producto.producto} x${i.cantidad}  $${fmt(i.producto.precioVenta*i.cantidad)}`).join('\n')
+  const texto=`${comercio}\n${d.fecha}\n${linea}\n${items}\n${linea}\nTOTAL: $${fmt(d.total)}\nPago: ${metodoPagoTexto}\n${linea}\nGracias por su compra!`
+  window.open('https://wa.me/?text='+encodeURIComponent(texto),'_blank')
 }
 
 // ════════════════════════════════════════════════════════════
 //  STOCK
 // ════════════════════════════════════════════════════════════
+const UMBRAL_BAJO = 5
+
+function updateStockAlerts(){
+  const bajos=stock.filter(p=>p.cantidad>0&&p.cantidad<=UMBRAL_BAJO)
+  const agotados=stock.filter(p=>p.cantidad===0)
+  const todos=[...agotados,...bajos]
+
+  // Badge sidebar
+  const badge=document.getElementById('sidebar-stock-badge')
+  if(todos.length){badge.textContent=todos.length;badge.classList.remove('hidden')}
+  else{badge.classList.add('hidden')}
+
+  // Banner en página Stock
+  const banner=document.getElementById('stock-alert-banner')
+  if(!banner)return
+  if(!todos.length){banner.innerHTML='';return}
+  const nombres=todos.map(p=>p.cantidad===0?`<strong>${p.producto}</strong> (agotado)`:`<strong>${p.producto}</strong> (${p.cantidad} uds)`).join(' · ')
+  banner.innerHTML=`<div class="stock-alert">
+    <span class="stock-alert-icon">⚠️</span>
+    <div class="stock-alert-body">
+      <p class="stock-alert-title">${todos.length} producto${todos.length>1?'s':''} con stock bajo</p>
+      <p class="stock-alert-items">${nombres}</p>
+    </div>
+  </div>`
+}
+
 function renderStock(){
+  updateStockAlerts()
   const list=document.getElementById('stock-list')
   if(!stock.length){list.innerHTML='<p style="text-align:center;color:var(--muted);padding:32px">Sin productos en stock</p>';return}
   list.innerHTML=stock.map(item=>`
@@ -790,6 +909,7 @@ function adjStock(id,d){
   if(s)s.cantidad=Math.max(0,s.cantidad+d)
   renderStock()
   updateTopbarBadge('p-stock')
+  updateStockAlerts()
 }
 function delStock(id){stock=stock.filter(p=>p.id!==id);renderStock();showToast('Producto eliminado');updateTopbarBadge('p-stock')}
 function openAddStock(){
