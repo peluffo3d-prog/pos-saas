@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/client"
 
 const DEMO_EMAIL = "demo@possaas.app"
 const DEMO_PASS = "DemoPos2026!"
+
 const DEMO_STOCK = [
   { producto:"Coca Cola 500ml",      cantidad:24, precio_costo:800,  precio_venta:1400 },
   { producto:"Agua mineral 500ml",   cantidad:30, precio_costo:350,  precio_venta:700  },
@@ -54,24 +55,17 @@ export async function entrarComoDemo(): Promise<{ ok: boolean; error?: string }>
 
   if (existing?.tenant_id) return { ok: true }
 
-  // 4. Crear tenant demo
-  const { data: tenant, error: tenantErr } = await db
-    .from("tenants")
-    .insert({ nombre: "Comercio Demo" })
-    .select()
-    .single()
+  // 4. Crear tenant demo via RPC (bypasea RLS)
+  const { data: tenantId, error: rpcErr } = await db
+    .rpc("create_tenant_for_user", { p_nombre: "Comercio Demo", p_email: DEMO_EMAIL })
 
-  if (tenantErr || !tenant) return { ok: false, error: "Error creando tenant demo: " + tenantErr?.message }
-
-  await db.from("tenant_users").insert({
-    user_id: user.id,
-    tenant_id: tenant.id,
-    role: "owner",
-  })
+  if (rpcErr || !tenantId) {
+    return { ok: false, error: "Error creando tenant demo: " + rpcErr?.message }
+  }
 
   // 5. Poblar con stock de ejemplo
   await db.from("stock").insert(
-    DEMO_STOCK.map((item) => ({ ...item, tenant_id: tenant.id }))
+    DEMO_STOCK.map((item) => ({ ...item, tenant_id: tenantId }))
   )
 
   return { ok: true }
