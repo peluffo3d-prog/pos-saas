@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Solid green background (maskable-safe) -->
+  <rect width="512" height="512" fill="#257a52"/>
+  <!-- Shopping bag handles (filled arch) -->
+  <path d="M175 262 Q175 122 256 122 Q337 122 337 262 L317 262 Q317 148 256 148 Q195 148 195 262 Z" fill="white"/>
+  <!-- Bag body -->
+  <rect x="118" y="252" width="276" height="206" rx="18" fill="white"/>
+</svg>

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client"
+import { type CategoriaKiosco, CATALOGO_KIOSCO } from "@/lib/catalogos/kiosco"
 
 export interface StockItem {
   id: number
@@ -7,6 +8,8 @@ export interface StockItem {
   precioCosto: number
   precioVenta: number
   fecha: string
+  imagenUrl?: string
+  categoria?: CategoriaKiosco
 }
 
 export type MetodoPago = "efectivo" | "transferencia" | "mixto"
@@ -89,6 +92,88 @@ export async function getNombreComercio(): Promise<string> {
   return data?.nombre ?? ""
 }
 
+// ─── Tenant / Fiscal ─────────────────────────────────────────────────────────
+
+export interface TenantInfo {
+  id: string
+  nombre: string
+  cuit?: string
+  condicionIva?: string
+  domicilio?: string
+  puntoVenta: number
+  ultimoNumeroComprobante: number
+}
+
+export async function getTenantInfo(): Promise<TenantInfo | null> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return null
+
+  const { data } = await supabase()
+    .from("tenants")
+    .select("id, nombre, cuit, condicion_iva, domicilio, punto_venta, ultimo_numero_comprobante")
+    .eq("id", tenantId)
+    .single()
+
+  if (!data) return null
+  return {
+    id: data.id,
+    nombre: data.nombre,
+    cuit: data.cuit ?? undefined,
+    condicionIva: data.condicion_iva ?? undefined,
+    domicilio: data.domicilio ?? undefined,
+    puntoVenta: data.punto_venta ?? 1,
+    ultimoNumeroComprobante: data.ultimo_numero_comprobante ?? 0,
+  }
+}
+
+export async function actualizarTenant(datos: {
+  nombre?: string
+  cuit?: string
+  condicionIva?: string
+  domicilio?: string
+  puntoVenta?: number
+}): Promise<void> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return
+
+  await supabase()
+    .from("tenants")
+    .update({
+      ...(datos.nombre !== undefined && { nombre: datos.nombre }),
+      ...(datos.cuit !== undefined && { cuit: datos.cuit }),
+      ...(datos.condicionIva !== undefined && { condicion_iva: datos.condicionIva }),
+      ...(datos.domicilio !== undefined && { domicilio: datos.domicilio }),
+      ...(datos.puntoVenta !== undefined && { punto_venta: datos.puntoVenta }),
+    })
+    .eq("id", tenantId)
+}
+
+export async function siguienteNumeroComprobante(): Promise<{ numero: string; tipo: string }> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return { numero: "0001-00000001", tipo: "Comprobante C" }
+
+  const { data } = await supabase()
+    .from("tenants")
+    .select("punto_venta, ultimo_numero_comprobante, condicion_iva")
+    .eq("id", tenantId)
+    .single()
+
+  const puntoVenta = data?.punto_venta ?? 1
+  const nuevoNumero = (data?.ultimo_numero_comprobante ?? 0) + 1
+
+  await supabase()
+    .from("tenants")
+    .update({ ultimo_numero_comprobante: nuevoNumero })
+    .eq("id", tenantId)
+
+  const pv = String(puntoVenta).padStart(4, "0")
+  const num = String(nuevoNumero).padStart(8, "0")
+  const condicion = data?.condicion_iva ?? "monotributista"
+  const tipo = condicion === "responsable_inscripto" ? "Comprobante B" : "Comprobante C"
+
+  return { numero: `${pv}-${num}`, tipo }
+}
+
 // ─── Stock ──────────────────────────────────────────────────────────────────
 
 export async function getStock(): Promise<StockItem[]> {
@@ -108,7 +193,42 @@ export async function getStock(): Promise<StockItem[]> {
     precioCosto: r.precio_costo,
     precioVenta: r.precio_venta,
     fecha: toDate(r.updated_at ?? r.created_at),
+    imagenUrl: r.imagen_url ?? undefined,
+    categoria: r.categoria ?? undefined,
   }))
+}
+
+export async function subirImagenProducto(id: number, file: File): Promise<string | null> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return null
+
+  const ext = file.name.split(".").pop() ?? "jpg"
+  const path = `${tenantId}/${id}.${ext}`
+
+  const { error } = await supabase()
+    .storage
+    .from("product-images")
+    .upload(path, file, { upsert: true, contentType: file.type })
+
+  if (error) return null
+
+  const { data } = supabase()
+    .storage
+    .from("product-images")
+    .getPublicUrl(path)
+
+  return data.publicUrl
+}
+
+export async function actualizarImagenProducto(id: number, imagenUrl: string): Promise<void> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return
+
+  await supabase()
+    .from("stock")
+    .update({ imagen_url: imagenUrl, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("tenant_id", tenantId)
 }
 
 export async function agregarProductoStock(
@@ -133,6 +253,8 @@ export async function agregarProductoStock(
         cantidad: existente.cantidad + item.cantidad,
         precio_costo: item.precioCosto,
         precio_venta: item.precioVenta,
+        ...(item.categoria !== undefined && { categoria: item.categoria }),
+        ...(item.imagenUrl !== undefined && { imagen_url: item.imagenUrl }),
         updated_at: new Date().toISOString(),
       })
       .eq("id", existente.id)
@@ -143,10 +265,35 @@ export async function agregarProductoStock(
       cantidad: item.cantidad,
       precio_costo: item.precioCosto,
       precio_venta: item.precioVenta,
+      categoria: item.categoria ?? null,
+      imagen_url: item.imagenUrl ?? null,
     })
   }
 
   return getStock()
+}
+
+export async function precargarCatalogoKiosco(
+  categorias: CategoriaKiosco[]
+): Promise<void> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return
+
+  const productos = CATALOGO_KIOSCO.filter((p) => categorias.includes(p.categoria))
+  if (productos.length === 0) return
+
+  await supabase()
+    .from("stock")
+    .insert(
+      productos.map((p) => ({
+        tenant_id: tenantId,
+        producto: p.producto,
+        cantidad: p.cantidad_inicial,
+        precio_costo: p.precio_costo,
+        precio_venta: p.precio_venta,
+        categoria: p.categoria,
+      }))
+    )
 }
 
 export async function eliminarProductoStock(id: number): Promise<StockItem[]> {
@@ -186,6 +333,8 @@ export async function buscarProductos(query: string): Promise<StockItem[]> {
     precioCosto: r.precio_costo,
     precioVenta: r.precio_venta,
     fecha: toDate(r.updated_at ?? r.created_at),
+    imagenUrl: r.imagen_url ?? undefined,
+    categoria: r.categoria ?? undefined,
   }))
 }
 

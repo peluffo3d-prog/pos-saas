@@ -2,11 +2,11 @@
 
 import { useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
-import { ShoppingCart, Package, Wallet, Menu, X, BarChart3, LogOut } from "lucide-react"
+import { ShoppingCart, Package, Wallet, Menu, X, BarChart3, LogOut, Settings } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 
 const bottomNav = [
-  { href: "/", icon: ShoppingCart, label: "POS" },
+  { href: "/", icon: ShoppingCart, label: "Vender" },
   { href: "/stock", icon: Package, label: "Stock" },
   { href: "/caja", icon: Wallet, label: "Caja" },
 ]
@@ -24,10 +24,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
-      {/* Backdrop */}
       {drawerOpen && (
         <div
-          className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm"
+          className="fixed inset-0 bg-black/40 z-40 backdrop-blur-sm"
           onClick={() => setDrawerOpen(false)}
         />
       )}
@@ -40,12 +39,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="flex items-center justify-between p-5 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-accent rounded-xl flex items-center justify-center">
-              <ShoppingCart className="w-4 h-4 text-accent-foreground" />
+            <div className="w-10 h-10 bg-accent rounded-2xl flex items-center justify-center">
+              <ShoppingCart className="w-5 h-5 text-accent-foreground" />
             </div>
             <div>
               <p className="font-display font-bold text-foreground text-sm leading-tight">Mi Comercio</p>
-              <p className="text-[11px] text-muted-foreground">POS SaaS</p>
+              <p className="text-[11px] text-muted-foreground">Punto de Venta</p>
             </div>
           </div>
           <button
@@ -62,22 +61,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             { href: "/", icon: ShoppingCart, label: "Punto de Venta" },
             { href: "/stock", icon: Package, label: "Stock" },
             { href: "/caja", icon: Wallet, label: "Caja" },
-            { href: "/ventas", icon: BarChart3, label: "Historial Ventas" },
+            { href: "/ventas", icon: BarChart3, label: "Historial de Ventas" },
+            { href: "/configuracion", icon: Settings, label: "Configuración" },
           ].map(({ href, icon: Icon, label }) => {
             const active = pathname === href
             return (
               <a
                 key={href}
                 href={href}
-                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-medium ${
+                className={`flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all text-sm font-semibold ${
                   active
-                    ? "bg-accent/10 text-accent"
+                    ? "bg-accent text-accent-foreground"
                     : "text-foreground hover:bg-secondary"
                 }`}
               >
-                <Icon
-                  className={`w-4 h-4 shrink-0 ${active ? "text-accent" : "text-muted-foreground"}`}
-                />
+                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-accent-foreground" : "text-muted-foreground"}`} />
                 {label}
               </a>
             )
@@ -95,13 +93,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 pb-20">
         {children}
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-md border-t border-border z-30">
+      <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border z-30 shadow-[0_-1px_8px_rgba(0,0,0,0.06)]">
         <div className="flex h-16 max-w-lg mx-auto">
           {bottomNav.map(({ href, icon: Icon, label }) => {
             const active = pathname === href
@@ -114,7 +111,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 }`}
               >
                 <Icon className="w-5 h-5" strokeWidth={active ? 2.5 : 2} />
-                <span className="text-[10px] font-semibold tracking-wide uppercase">{label}</span>
+                <span className="text-[10px] font-semibold">{label}</span>
               </a>
             )
           })}
@@ -123,7 +120,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className="flex-1 flex flex-col items-center justify-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
           >
             <Menu className="w-5 h-5" strokeWidth={2} />
-            <span className="text-[10px] font-semibold tracking-wide uppercase">Menú</span>
+            <span className="text-[10px] font-semibold">Más</span>
           </button>
         </div>
       </nav>

@@ -1,210 +1,266 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { Search, Minus, Plus, Trash2, X, Loader2, Printer, MessageCircle } from "lucide-react"
-import { buscarProductos, realizarVenta, getTotalesHoy, getNombreComercio, type StockItem, type MetodoPago, type DatosPago } from "@/lib/store"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
+import { Search, X, Loader2, Printer, MessageCircle, Minus, Plus, Trash2 } from "lucide-react"
+import {
+  getStock, realizarVenta, getTotalesHoy, getNombreComercio,
+  getTenantInfo, siguienteNumeroComprobante,
+  type StockItem, type MetodoPago, type DatosPago, type TenantInfo,
+} from "@/lib/store"
 import { AppShell } from "@/components/app-shell"
+import { ProductGrid } from "@/components/pos/product-grid"
+import { Cart, type CarritoItem } from "@/components/pos/cart"
+import { PaymentDialog } from "@/components/pos/payment-dialog"
+import { CategoryTabs, type CategoriaActiva } from "@/components/pos/category-tabs"
 
-type CarritoItem = {
-  producto: StockItem
-  cantidad: number
+const SCAN_GAP_MS = 35
+
+const getGreeting = () => {
+  const h = new Date().getHours()
+  if (h < 12) return "Buenos días"
+  if (h < 19) return "Buenas tardes"
+  return "Buenas noches"
 }
 
+const getFecha = () =>
+  new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })
+
 export default function Home() {
-  const [query, setQuery] = useState("")
-  const [resultados, setResultados] = useState<StockItem[]>([])
-  const [carrito, setCarrito] = useState<CarritoItem[]>([])
-  const [toast, setToast] = useState<{ mensaje: string; error: boolean } | null>(null)
-  const [ventasHoy, setVentasHoy] = useState(0)
-  const [mounted, setMounted] = useState(false)
-  const [modalOpen, setModalOpen] = useState(false)
-  const [productoSeleccionado, setProductoSeleccionado] = useState<StockItem | null>(null)
-  const [cantidadModal, setCantidadModal] = useState(1)
-  const [modalPagoOpen, setModalPagoOpen] = useState(false)
-  const [metodoPago, setMetodoPago] = useState<MetodoPago>("efectivo")
-  const [montoEfectivo, setMontoEfectivo] = useState(0)
-  const [montoTransferencia, setMontoTransferencia] = useState(0)
-  const [modalTicketOpen, setModalTicketOpen] = useState(false)
-  const [ticketData, setTicketData] = useState<{ items: CarritoItem[]; total: number; metodo: MetodoPago; efectivo: number; transferencia: number; fecha: string } | null>(null)
-  const [nombreComercio, setNombreComercio] = useState("")
+  const [query, setQuery]                 = useState("")
+  const [catalogo, setCatalogo]           = useState<StockItem[]>([])
+  const [carrito, setCarrito]             = useState<CarritoItem[]>([])
+  const [categoriaActiva, setCategoria]   = useState<CategoriaActiva>("Todas")
+  const [ventasHoy, setVentasHoy]         = useState(0)
+  const [nombreComercio, setNombre]       = useState("")
+  const [tenantInfo, setTenantInfo]       = useState<TenantInfo | null>(null)
+  const [mounted, setMounted]             = useState(false)
+  const [procesando, setProcesando]       = useState(false)
+  const [toast, setToast]                 = useState<{ msg: string; ok: boolean } | null>(null)
+
+  // Modales
+  const [carritoOpen, setCarritoOpen]     = useState(false)
+  const [modalPagoOpen, setModalPago]     = useState(false)
+  const [metodoPagoInicial, setMetodoI]   = useState<MetodoPago>("efectivo")
+  const [modalTicket, setModalTicket]     = useState<{
+    items: CarritoItem[]; total: number; metodo: MetodoPago
+    efectivo: number; transferencia: number; fecha: string
+    numeroComprobante: string; tipoComprobante: string; vuelto: number
+  } | null>(null)
+
+  const searchRef   = useRef<HTMLInputElement>(null)
+  const lastKeyTime = useRef<number>(0)
+  const isScanning  = useRef<boolean>(false)
+
+  const focusSearch = useCallback(() => {
+    requestAnimationFrame(() => searchRef.current?.focus())
+  }, [])
 
   const refreshTotales = useCallback(async () => {
-    const totales = await getTotalesHoy()
-    setVentasHoy(totales.totalVentas)
+    const t = await getTotalesHoy()
+    setVentasHoy(t.totalVentas)
+  }, [])
+
+  const refreshCatalogo = useCallback(async () => {
+    const data = await getStock()
+    setCatalogo(data)
   }, [])
 
   useEffect(() => {
     Promise.all([
       refreshTotales(),
-      getNombreComercio().then(setNombreComercio),
-    ]).then(() => setMounted(true))
-  }, [refreshTotales])
+      refreshCatalogo(),
+      getNombreComercio().then(setNombre),
+      getTenantInfo().then(setTenantInfo),
+    ]).then(() => { setMounted(true); focusSearch() })
+  }, [refreshTotales, refreshCatalogo, focusSearch])
+
+  const toast_ = useCallback((msg: string, ok = true) => {
+    setToast({ msg, ok })
+    setTimeout(() => setToast(null), 2800)
+  }, [])
+
+  // Grilla filtrada cliente-side — sin red, instantáneo
+  const productosFiltrados = useMemo(() => {
+    const base = query.trim()
+      ? catalogo.filter((p) => p.producto.toLowerCase().includes(query.toLowerCase()))
+      : catalogo
+    if (categoriaActiva === "Todas") return base
+    return base.filter((p) => (p.categoria ?? "Otros") === categoriaActiva)
+  }, [catalogo, query, categoriaActiva])
+
+  // Top 12 más vendidos (proxy: más stock = más movimiento)
+  const favoritos = useMemo(
+    () => [...catalogo].filter((p) => p.cantidad > 0).sort((a, b) => b.cantidad - a.cantidad).slice(0, 12),
+    [catalogo],
+  )
+
+  // ─── Carrito ────────────────────────────────────────────────────────────────
+
+  const agregarAlCarrito = useCallback(
+    (producto: StockItem, cantidad = 1) => {
+      if (producto.cantidad <= 0) { toast_(`${producto.producto} sin stock`, false); return }
+      setCarrito((prev) => {
+        const existe  = prev.find((it) => it.producto.id === producto.id)
+        const actual  = existe?.cantidad ?? 0
+        if (actual + cantidad > producto.cantidad) {
+          toast_(`Stock máx: ${producto.cantidad}`, false)
+          return prev
+        }
+        if (existe) return prev.map((it) => it.producto.id === producto.id ? { ...it, cantidad: it.cantidad + cantidad } : it)
+        return [...prev, { producto, cantidad }]
+      })
+      toast_(`${producto.producto} agregado`)
+    },
+    [toast_],
+  )
+
+  const cambiarCantidad = useCallback((id: number, delta: number) => {
+    setCarrito((prev) =>
+      prev
+        .map((it) => {
+          if (it.producto.id !== id) return it
+          const nueva = Math.min(Math.max(it.cantidad + delta, 0), it.producto.cantidad)
+          return { ...it, cantidad: nueva }
+        })
+        .filter((it) => it.cantidad > 0),
+    )
+  }, [])
+
+  const eliminarItem   = useCallback((id: number) => setCarrito((prev) => prev.filter((it) => it.producto.id !== id)), [])
+  const limpiarCarrito = useCallback(() => setCarrito([]), [])
+
+  const totalCarrito = useMemo(
+    () => carrito.reduce((a, i) => a + i.producto.precioVenta * i.cantidad, 0),
+    [carrito],
+  )
+
+  // ─── Pago ───────────────────────────────────────────────────────────────────
+
+  const abrirCobro = useCallback(
+    (metodo: MetodoPago = "efectivo") => {
+      if (carrito.length === 0) { toast_("Carrito vacío", false); return }
+      setMetodoI(metodo)
+      setCarritoOpen(false)
+      setModalPago(true)
+    },
+    [carrito.length, toast_],
+  )
+
+  const finalizarVenta = useCallback(
+    async (datosPago: DatosPago, recibido: number) => {
+      if (procesando) return
+      setProcesando(true)
+      const itemsVendidos = [...carrito]
+      const errores: string[] = []
+
+      for (const item of carrito) {
+        const r = await realizarVenta(item.producto.id, item.cantidad, datosPago)
+        if (!r.success) errores.push(r.mensaje)
+      }
+
+      if (errores.length > 0) {
+        setProcesando(false)
+        toast_(errores[0], false)
+        return
+      }
+
+      const [, , comprobante] = await Promise.all([
+        refreshTotales(),
+        refreshCatalogo(),
+        siguienteNumeroComprobante(),
+      ])
+
+      const vuelto = datosPago.metodoPago === "efectivo" ? Math.max(0, recibido - totalCarrito) : 0
+
+      setCarrito([])
+      setModalPago(false)
+      setModalTicket({
+        items: itemsVendidos,
+        total: totalCarrito,
+        metodo: datosPago.metodoPago,
+        efectivo: datosPago.montoEfectivo ?? 0,
+        transferencia: datosPago.montoTransferencia ?? 0,
+        fecha: new Date().toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+        numeroComprobante: comprobante.numero,
+        tipoComprobante: comprobante.tipo,
+        vuelto,
+      })
+      setProcesando(false)
+      focusSearch()
+    },
+    [carrito, totalCarrito, procesando, refreshTotales, refreshCatalogo, siguienteNumeroComprobante, toast_, focusSearch],
+  )
+
+  // ─── Barcode scanner ────────────────────────────────────────────────────────
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const now = performance.now()
+    if (now - lastKeyTime.current < SCAN_GAP_MS) isScanning.current = true
+    lastKeyTime.current = now
+
+    if (e.key === "Enter") {
+      e.preventDefault()
+      const q = query.trim()
+      if (!q) return
+      const exacto =
+        productosFiltrados.find((p) => p.producto.toLowerCase() === q.toLowerCase()) ??
+        (productosFiltrados.length === 1 ? productosFiltrados[0] : null)
+      if (exacto) {
+        agregarAlCarrito(exacto, 1)
+        setQuery("")
+      } else if (isScanning.current) {
+        toast_(`Sin match: ${q}`, false)
+        setQuery("")
+      }
+      isScanning.current = false
+      focusSearch()
+    }
+  }
+
+  // ─── Keyboard shortcuts ─────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!query.trim()) { setResultados([]); return }
-    const timer = setTimeout(async () => {
-      const productos = await buscarProductos(query)
-      setResultados(productos)
-    }, 200)
-    return () => clearTimeout(timer)
-  }, [query])
-
-  const mostrarToast = (mensaje: string, error = false) => {
-    setToast({ mensaje, error })
-    setTimeout(() => setToast(null), 2800)
-  }
-
-  const abrirModal = (producto: StockItem) => {
-    setProductoSeleccionado(producto)
-    setCantidadModal(1)
-    setModalOpen(true)
-    setQuery("")
-    setResultados([])
-  }
-
-  const cerrarModal = () => { setModalOpen(false); setProductoSeleccionado(null) }
-
-  const setPreset = (n: number) => {
-    if (!productoSeleccionado) return
-    const qty = Math.min(n, productoSeleccionado.cantidad)
-    setCantidadModal(qty)
-    confirmarAgregar(qty)
-  }
-
-  const spinCantidad = (delta: number) => {
-    if (!productoSeleccionado) return
-    setCantidadModal((prev) => Math.max(1, Math.min(prev + delta, productoSeleccionado.cantidad)))
-  }
-
-  const confirmarAgregar = (cantidadOverride?: number) => {
-    if (!productoSeleccionado) return
-    const cantidad = cantidadOverride ?? cantidadModal
-    const enCarrito = carrito.find((item) => item.producto.id === productoSeleccionado.id)
-    const cantidadActual = enCarrito ? enCarrito.cantidad : 0
-
-    if (cantidadActual + cantidad > productoSeleccionado.cantidad) {
-      mostrarToast(`Stock insuficiente. Hay ${productoSeleccionado.cantidad}, ya tenés ${cantidadActual} en carrito`, true)
-      return
-    }
-
-    setCarrito((prev) => {
-      const existe = prev.find((item) => item.producto.id === productoSeleccionado.id)
-      if (existe) {
-        return prev.map((item) =>
-          item.producto.id === productoSeleccionado.id
-            ? { ...item, cantidad: item.cantidad + cantidad }
-            : item
-        )
+    const onKey = (e: KeyboardEvent) => {
+      if (modalPagoOpen) return
+      if (e.key === "F2") { e.preventDefault(); abrirCobro("efectivo") }
+      else if (e.key === "F3") { e.preventDefault(); abrirCobro("transferencia") }
+      else if (e.key === "F4") { e.preventDefault(); abrirCobro("mixto") }
+      else if (e.key === "Escape") {
+        if (query) { setQuery(""); return }
+        if (carrito.length > 0) { setCarrito((p) => p.slice(0, -1)); toast_("Último ítem removido") }
+        focusSearch()
       }
-      return [...prev, { producto: productoSeleccionado, cantidad }]
-    })
-
-    mostrarToast(`${productoSeleccionado.producto} x${cantidad} agregado`)
-    cerrarModal()
-  }
-
-  const actualizarCantidadCarrito = (id: number, delta: number) => {
-    setCarrito((prev) =>
-      prev.map((item) => {
-        if (item.producto.id === id) {
-          const nuevaCantidad = Math.max(1, Math.min(item.cantidad + delta, item.producto.cantidad))
-          return { ...item, cantidad: nuevaCantidad }
-        }
-        return item
-      })
-    )
-  }
-
-  const eliminarDelCarrito = (id: number) => {
-    setCarrito((prev) => prev.filter((item) => item.producto.id !== id))
-  }
-
-  const totalCarrito = carrito.reduce((acc, item) => acc + item.producto.precioVenta * item.cantidad, 0)
-
-  const abrirModalPago = () => {
-    setMetodoPago("efectivo")
-    setMontoEfectivo(totalCarrito)
-    setMontoTransferencia(0)
-    setModalPagoOpen(true)
-  }
-
-  const handleMetodoPagoChange = (metodo: MetodoPago) => {
-    setMetodoPago(metodo)
-    if (metodo === "efectivo") { setMontoEfectivo(totalCarrito); setMontoTransferencia(0) }
-    else if (metodo === "transferencia") { setMontoEfectivo(0); setMontoTransferencia(totalCarrito) }
-    else { const mitad = Math.floor(totalCarrito / 2); setMontoEfectivo(mitad); setMontoTransferencia(totalCarrito - mitad) }
-  }
-
-  const handleMontoEfectivoChange = (valor: number) => {
-    const efectivo = Math.min(Math.max(0, valor), totalCarrito)
-    setMontoEfectivo(efectivo)
-    setMontoTransferencia(totalCarrito - efectivo)
-  }
-
-  const handleMontoTransferenciaChange = (valor: number) => {
-    const transferencia = Math.min(Math.max(0, valor), totalCarrito)
-    setMontoTransferencia(transferencia)
-    setMontoEfectivo(totalCarrito - transferencia)
-  }
-
-  const finalizarVenta = async () => {
-    const datosPago: DatosPago = {
-      metodoPago,
-      montoEfectivo: metodoPago === "transferencia" ? 0 : montoEfectivo,
-      montoTransferencia: metodoPago === "efectivo" ? 0 : montoTransferencia,
     }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [modalPagoOpen, query, carrito.length, abrirCobro, toast_, focusSearch])
 
-    const itemsVendidos = [...carrito]
-    const errores: string[] = []
-    for (const item of carrito) {
-      const resultado = await realizarVenta(item.producto.id, item.cantidad, datosPago)
-      if (!resultado.success) errores.push(resultado.mensaje)
-    }
+  useEffect(() => {
+    if (mounted && !modalPagoOpen) focusSearch()
+  }, [mounted, modalPagoOpen, focusSearch])
 
-    if (errores.length > 0) {
-      mostrarToast(errores.join(", "), true)
-      return
-    }
+  // ─── Texto para ticket WhatsApp / impresión ──────────────────────────────────
 
-    await refreshTotales()
-    setModalPagoOpen(false)
-    setTicketData({
-      items: itemsVendidos,
-      total: totalCarrito,
-      metodo: metodoPago,
-      efectivo: metodoPago === "transferencia" ? 0 : montoEfectivo,
-      transferencia: metodoPago === "efectivo" ? 0 : montoTransferencia,
-      fecha: new Date().toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
-    })
-    setModalTicketOpen(true)
-    setCarrito([])
-  }
-
-  const generarTextoTicket = () => {
-    if (!ticketData) return ""
-    const linea = "─".repeat(28)
-    const items = ticketData.items.map((i) =>
+  const textoTicket = () => {
+    if (!modalTicket) return ""
+    const l = "─".repeat(32)
+    const comercio = nombreComercio || "Mi Comercio"
+    const cuitLine = tenantInfo?.cuit ? `CUIT: ${tenantInfo.cuit}` : ""
+    const domicilio = tenantInfo?.domicilio ?? ""
+    const condicion = tenantInfo?.condicionIva === "responsable_inscripto" ? "Resp. Inscripto"
+      : tenantInfo?.condicionIva === "excento" ? "Exento de IVA" : "Monotributista"
+    const items = modalTicket.items.map((i) =>
       `${i.producto.producto} x${i.cantidad}  $${(i.producto.precioVenta * i.cantidad).toLocaleString("es-AR")}`
     ).join("\n")
-    const metodoPagoTexto =
-      ticketData.metodo === "efectivo" ? "Efectivo" :
-      ticketData.metodo === "transferencia" ? "Transferencia" :
-      `Mixto: Ef $${ticketData.efectivo.toLocaleString("es-AR")} / Tr $${ticketData.transferencia.toLocaleString("es-AR")}`
-    return `${nombreComercio || "Mi Comercio"}\n${ticketData.fecha}\n${linea}\n${items}\n${linea}\nTOTAL: $${ticketData.total.toLocaleString("es-AR")}\nPago: ${metodoPagoTexto}\n${linea}\nGracias por su compra!`
+    const pago = modalTicket.metodo === "efectivo" ? "Efectivo"
+      : modalTicket.metodo === "transferencia" ? "Transferencia"
+      : `Mixto: Ef $${modalTicket.efectivo.toLocaleString("es-AR")} / Tr $${modalTicket.transferencia.toLocaleString("es-AR")}`
+    const header = [comercio, domicilio, cuitLine, condicion].filter(Boolean).join("\n")
+    const vueltoLine = modalTicket.vuelto > 0 ? `\nVuelto: $${modalTicket.vuelto.toLocaleString("es-AR")}` : ""
+    return `${header}\n${l}\n${modalTicket.tipoComprobante}\nN° ${modalTicket.numeroComprobante}\n${modalTicket.fecha}\n${l}\n${items}\n${l}\nTOTAL: $${modalTicket.total.toLocaleString("es-AR")}\nPago: ${pago}${vueltoLine}\n${l}\nGracias por su compra!`
   }
 
-  const handleImprimir = () => window.print()
-
-  const handleWhatsApp = () => {
-    const texto = generarTextoTicket()
-    window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, "_blank")
-  }
-
-  const getBadgeStock = (cantidad: number) => {
-    if (cantidad <= 0) return { clase: "bg-destructive/20 text-destructive", texto: "Agotado" }
-    if (cantidad <= 5) return { clase: "bg-warning/20 text-warning", texto: "Bajo" }
-    return { clase: "bg-accent/20 text-accent", texto: "OK" }
-  }
+  // ─── Loading ─────────────────────────────────────────────────────────────────
 
   if (!mounted) {
     return (
@@ -214,297 +270,295 @@ export default function Home() {
     )
   }
 
+  // ─── Render ───────────────────────────────────────────────────────────────────
+
   return (
     <AppShell>
-      {/* Sticky header */}
-      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b border-border px-4 py-3">
-        <div className="flex items-center justify-between max-w-xl mx-auto">
-          <h1 className="font-display font-bold text-foreground text-lg">Punto de Venta</h1>
-          <div className="bg-accent/10 border border-accent/20 rounded-xl px-3 py-1.5 text-center min-w-[80px]">
-            <p className="text-[10px] uppercase text-accent/70 font-bold tracking-widest leading-none mb-0.5">Hoy</p>
-            <p className="text-sm font-bold text-accent leading-tight">${ventasHoy.toLocaleString("es-AR")}</p>
-          </div>
-        </div>
-      </div>
+      <div className="flex flex-col lg:flex-row min-h-[calc(100svh-4rem)]">
 
-      <div className="px-4 pt-4 max-w-xl mx-auto w-full">
-        {/* Search */}
-        <div className="relative mb-4">
-          <div className={`flex items-center rounded-xl border bg-card px-4 py-3.5 gap-3 transition-all ${query ? "border-accent shadow-[0_0_0_3px_oklch(0.83_0.17_163/0.12)]" : "border-border hover:border-muted-foreground/30"}`}>
-            <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="flex-1 border-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground/60 outline-none"
-              placeholder="Buscar producto por nombre..."
-              autoComplete="off"
-            />
-            {query && (
-              <button onClick={() => { setQuery(""); setResultados([]) }} className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
-                <X className="h-4 w-4" />
-              </button>
+        {/* ─── Columna izquierda: productos ─────────────────────────── */}
+        <section className="flex-1 flex flex-col min-w-0">
+
+          {/* Hero verde — solo mobile */}
+          <div className="lg:hidden bg-accent px-5 pt-8 pb-10">
+            <p className="text-accent-foreground/70 text-sm mb-1 capitalize">{getFecha()}</p>
+            <h1 className="font-display font-bold text-accent-foreground text-xl mb-4">
+              {getGreeting()}, {nombreComercio || "Mi Comercio"} 👋
+            </h1>
+            <div className="bg-white/20 backdrop-blur-sm rounded-2xl px-5 py-4 flex items-center justify-between">
+              <div>
+                <p className="text-accent-foreground/70 text-xs font-semibold uppercase tracking-wider mb-1">Vendido hoy</p>
+                <p className="text-accent-foreground font-bold text-3xl tracking-tight">${ventasHoy.toLocaleString("es-AR")}</p>
+              </div>
+              <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center text-2xl select-none">💰</div>
+            </div>
+          </div>
+
+          {/* Header sticky */}
+          <header className="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b border-border px-4 py-3">
+            {/* Desktop: nombre + vendido hoy */}
+            <div className="hidden lg:flex items-center justify-between mb-3">
+              <h1 className="font-bold text-lg text-foreground truncate">{nombreComercio || "Punto de Venta"}</h1>
+              <div className="bg-accent/10 border border-accent/20 rounded-xl px-3 py-1.5 text-right">
+                <p className="text-[9px] uppercase font-bold tracking-widest text-accent/80 leading-none">Hoy</p>
+                <p className="text-base font-bold text-accent leading-tight">${ventasHoy.toLocaleString("es-AR")}</p>
+              </div>
+            </div>
+
+            {/* Barra de búsqueda */}
+            <div className={`flex items-center rounded-xl border-2 bg-card px-4 h-12 gap-3 transition-all ${
+              query ? "border-accent shadow-[0_0_0_3px_oklch(0.49_0.12_165/0.10)]" : "border-border"
+            }`}>
+              <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+              <input
+                ref={searchRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder="Buscar / escanear código de barras"
+                autoComplete="off"
+                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/60 outline-none"
+              />
+              {query && (
+                <button onClick={() => { setQuery(""); focusSearch() }} className="text-muted-foreground hover:text-foreground p-1">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </header>
+
+          {/* Category tabs */}
+          <div className="px-4 pt-3 pb-1">
+            <CategoryTabs activa={categoriaActiva} onChange={(c) => { setCategoria(c); focusSearch() }} />
+          </div>
+
+          {/* Favoritos — solo cuando no hay búsqueda y categoría = Todas */}
+          {!query && favoritos.length > 0 && categoriaActiva === "Todas" && (
+            <div className="px-4 pt-3">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Favoritos</p>
+              <ProductGrid productos={favoritos} onSelect={(p) => agregarAlCarrito(p, 1)} compact />
+            </div>
+          )}
+
+          {/* Grid principal */}
+          <div className="px-4 py-3 flex-1 pb-36 lg:pb-6">
+            {query && productosFiltrados.length > 0 && (
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                {productosFiltrados.length} resultado{productosFiltrados.length !== 1 ? "s" : ""}
+              </p>
+            )}
+            {!query && (
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Catálogo</p>
+            )}
+
+            {catalogo.length === 0 ? (
+              <div className="text-center py-16 text-muted-foreground">
+                <div className="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center mx-auto mb-4 text-3xl">📦</div>
+                <p className="font-semibold text-sm text-foreground mb-1">No hay productos cargados</p>
+                <a href="/stock" className="text-accent font-semibold text-sm underline">Ir a Stock →</a>
+              </div>
+            ) : productosFiltrados.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground text-sm">
+                {query ? `Sin resultados para "${query}"` : `No hay productos en esta categoría`}
+              </div>
+            ) : (
+              <ProductGrid productos={productosFiltrados} onSelect={(p) => agregarAlCarrito(p, 1)} />
             )}
           </div>
+        </section>
 
-          {/* Results dropdown */}
-          {resultados.length > 0 && (
-            <div className="absolute left-0 right-0 top-full mt-2 bg-card border border-border rounded-xl overflow-hidden shadow-2xl z-50">
-              {resultados.map((producto) => {
-                const badge = getBadgeStock(producto.cantidad)
-                const sinStock = producto.cantidad <= 0
-                const enCarrito = carrito.find((c) => c.producto.id === producto.id)
-                return (
-                  <button
-                    key={producto.id}
-                    onClick={() => !sinStock && abrirModal(producto)}
-                    disabled={sinStock}
-                    className={`w-full p-4 border-b border-border last:border-b-0 flex justify-between items-center text-left transition-colors ${sinStock ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-foreground text-sm flex items-center gap-2 flex-wrap">
-                        {producto.producto}
-                        {enCarrito && (
-                          <span className="bg-accent/20 text-accent text-[10px] px-2 py-0.5 rounded-full font-bold">
-                            {enCarrito.cantidad} en carrito
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
-                        Stock: {producto.cantidad}
-                        <span className={`px-1.5 py-0.5 rounded-full font-semibold text-[10px] ${badge.clase}`}>{badge.texto}</span>
-                      </div>
-                    </div>
-                    <div className="text-accent font-bold ml-4 shrink-0 text-sm">${producto.precioVenta.toLocaleString("es-AR")}</div>
-                  </button>
-                )
-              })}
-            </div>
-          )}
+        {/* ─── Columna derecha: carrito desktop ─────────────────────── */}
+        <aside className="hidden lg:flex lg:w-[400px] xl:w-[440px] border-l border-border bg-card flex-col sticky top-0 h-[calc(100svh-4rem)] overflow-hidden">
+          <Cart
+            items={carrito}
+            total={totalCarrito}
+            onChangeQty={cambiarCantidad}
+            onRemove={eliminarItem}
+            onClear={limpiarCarrito}
+            onCobrar={() => abrirCobro("efectivo")}
+          />
+        </aside>
+      </div>
 
-          {query && resultados.length === 0 && (
-            <div className="absolute left-0 right-0 top-full mt-2 bg-card border border-border rounded-xl p-4 text-center text-muted-foreground text-sm shadow-2xl z-50">
-              Sin resultados para &quot;{query}&quot;
-            </div>
-          )}
+      {/* ─── Botón flotante carrito (mobile) ────────────────────────── */}
+      {carrito.length > 0 && (
+        <div className="lg:hidden fixed bottom-20 left-4 right-4 z-30">
+          <button
+            onClick={() => setCarritoOpen(true)}
+            className="w-full bg-accent text-accent-foreground font-bold py-4 rounded-2xl shadow-lg flex items-center justify-between px-5 hover:opacity-90 active:scale-[0.98] transition-all"
+          >
+            <span>{carrito.reduce((a, i) => a + i.cantidad, 0)} productos</span>
+            <span className="text-lg">${totalCarrito.toLocaleString("es-AR")}</span>
+          </button>
         </div>
+      )}
 
-        {/* Empty state */}
-        {carrito.length === 0 && !query && (
-          <div className="text-center py-14">
-            <div className="w-16 h-16 bg-secondary rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Search className="w-7 h-7 text-muted-foreground/50" />
+      {/* ─── Bottom sheet carrito (mobile) ──────────────────────────── */}
+      {carritoOpen && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end z-50"
+          onClick={(e) => e.target === e.currentTarget && setCarritoOpen(false)}
+        >
+          <div className="bg-card border-t border-border w-full rounded-t-3xl shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-border shrink-0">
+              <h2 className="font-bold text-foreground">Tu carrito</h2>
+              <button onClick={() => setCarritoOpen(false)} className="w-8 h-8 bg-secondary rounded-full flex items-center justify-center text-muted-foreground hover:bg-border">
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <p className="text-muted-foreground text-sm">Buscá un producto para empezar a vender</p>
-          </div>
-        )}
-
-        {/* Cart */}
-        {carrito.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Carrito</p>
-              <span className="text-xs text-muted-foreground">{carrito.length} {carrito.length === 1 ? "producto" : "productos"}</span>
-            </div>
-            <div className="divide-y divide-border">
-              {carrito.map((item) => (
-                <div key={item.producto.id} className="flex items-center p-3 gap-3">
+            <div className="flex-1 overflow-y-auto divide-y divide-border px-4">
+              {carrito.map((it) => (
+                <div key={it.producto.id} className="flex items-center py-3 gap-3">
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-foreground text-sm truncate">{item.producto.producto}</p>
-                    <p className="text-xs text-muted-foreground">${item.producto.precioVenta.toLocaleString("es-AR")} c/u</p>
+                    <p className="font-semibold text-sm truncate">{it.producto.producto}</p>
+                    <p className="text-xs text-muted-foreground">${it.producto.precioVenta.toLocaleString("es-AR")} c/u</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => actualizarCantidadCarrito(item.producto.id, -1)} className="w-7 h-7 bg-secondary rounded-lg flex items-center justify-center hover:bg-border transition-colors active:scale-95">
-                      <Minus className="w-3.5 h-3.5 text-foreground" />
+                    <button onClick={() => cambiarCantidad(it.producto.id, -1)} className="w-8 h-8 bg-secondary rounded-lg flex items-center justify-center active:scale-95">
+                      <Minus className="w-3 h-3" />
                     </button>
-                    <span className="w-5 text-center font-bold text-foreground text-sm">{item.cantidad}</span>
-                    <button onClick={() => actualizarCantidadCarrito(item.producto.id, 1)} className="w-7 h-7 bg-secondary rounded-lg flex items-center justify-center hover:bg-border transition-colors active:scale-95">
-                      <Plus className="w-3.5 h-3.5 text-foreground" />
+                    <span className="w-5 text-center font-bold text-sm">{it.cantidad}</span>
+                    <button onClick={() => cambiarCantidad(it.producto.id, 1)} className="w-8 h-8 bg-secondary rounded-lg flex items-center justify-center active:scale-95">
+                      <Plus className="w-3 h-3" />
                     </button>
-                    <p className="font-bold text-accent w-[60px] text-right text-sm">${(item.producto.precioVenta * item.cantidad).toLocaleString("es-AR")}</p>
-                    <button onClick={() => eliminarDelCarrito(item.producto.id)} className="text-muted-foreground hover:text-destructive transition-colors p-1">
-                      <Trash2 className="w-4 h-4" />
+                    <p className="font-bold text-sm text-accent w-[60px] text-right">${(it.producto.precioVenta * it.cantidad).toLocaleString("es-AR")}</p>
+                    <button onClick={() => eliminarItem(it.producto.id)} className="text-muted-foreground hover:text-destructive p-1">
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="p-4 border-t border-border bg-accent/5">
+            <div className="px-4 py-4 border-t border-border bg-secondary/40 shrink-0">
               <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-semibold text-muted-foreground">Total a cobrar</p>
-                <p className="text-2xl font-bold text-accent">${totalCarrito.toLocaleString("es-AR")}</p>
+                <p className="text-sm font-semibold text-muted-foreground">Total</p>
+                <p className="text-2xl font-bold text-foreground">${totalCarrito.toLocaleString("es-AR")}</p>
               </div>
-              <button
-                onClick={abrirModalPago}
-                className="w-full bg-accent text-accent-foreground font-bold py-3.5 rounded-xl hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_0_20px_oklch(0.83_0.17_163/0.3)] text-sm"
-              >
+              <button onClick={() => abrirCobro("efectivo")} className="w-full bg-accent text-accent-foreground font-bold py-4 rounded-2xl hover:opacity-90 active:scale-[0.98] transition-all text-base mb-2">
                 COBRAR ${totalCarrito.toLocaleString("es-AR")}
               </button>
-              <button
-                onClick={() => setCarrito([])}
-                className="w-full border border-border text-muted-foreground font-medium py-2.5 rounded-xl mt-2 hover:bg-secondary transition-colors text-sm"
-              >
+              <button onClick={() => { limpiarCarrito(); setCarritoOpen(false) }} className="w-full border border-border text-muted-foreground font-medium py-3 rounded-2xl hover:bg-secondary transition-colors text-sm">
                 Limpiar carrito
               </button>
             </div>
           </div>
-        )}
-      </div>
-
-      {/* Modal cantidad */}
-      {modalOpen && productoSeleccionado && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-4" onClick={(e) => e.target === e.currentTarget && cerrarModal()}>
-          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl">
-            <p className="font-display text-lg font-bold text-foreground mb-1">{productoSeleccionado.producto}</p>
-            <p className="text-accent font-bold text-xl mb-5">${productoSeleccionado.precioVenta.toLocaleString("es-AR")}</p>
-            <div className="grid grid-cols-5 gap-2 mb-5">
-              {[1, 2, 3, 5, 10].map((n) => (
-                <button key={n} onClick={() => setPreset(n)} disabled={n > productoSeleccionado.cantidad} className="py-2.5 border border-border rounded-xl font-bold text-foreground text-sm hover:border-accent hover:bg-accent/10 hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95">
-                  {n}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center justify-center gap-5 mb-5">
-              <button onClick={() => spinCantidad(-1)} className="w-12 h-12 bg-secondary text-foreground rounded-xl text-xl font-bold hover:bg-border transition-colors active:scale-95">−</button>
-              <span className="text-4xl font-bold text-foreground min-w-[60px] text-center">{cantidadModal}</span>
-              <button onClick={() => spinCantidad(1)} className="w-12 h-12 bg-secondary text-foreground rounded-xl text-xl font-bold hover:bg-border transition-colors active:scale-95">+</button>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => confirmarAgregar()} className="flex-1 bg-accent text-accent-foreground font-bold py-3.5 rounded-xl hover:opacity-90 active:scale-[0.98] transition-all text-sm">AGREGAR</button>
-              <button onClick={cerrarModal} className="flex-1 bg-secondary text-foreground font-medium py-3.5 rounded-xl hover:bg-border transition-colors text-sm">Cancelar</button>
-            </div>
-            <p className="text-center text-xs text-muted-foreground mt-3">Stock disponible: {productoSeleccionado.cantidad} unidades</p>
-          </div>
         </div>
       )}
 
-      {/* Modal pago */}
+      {/* ─── Payment dialog ───────────────────────────────────────────── */}
       {modalPagoOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-4" onClick={(e) => e.target === e.currentTarget && setModalPagoOpen(false)}>
-          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl">
-            <p className="font-display text-lg font-bold text-foreground mb-1">Método de Pago</p>
-            <div className="bg-accent/10 border border-accent/20 rounded-xl px-4 py-3 text-center mb-4">
-              <p className="text-[10px] uppercase text-accent/70 font-bold tracking-widest">Total</p>
-              <p className="text-2xl font-bold text-accent">${totalCarrito.toLocaleString("es-AR")}</p>
-            </div>
-            <div className="space-y-2 mb-4">
-              {(["efectivo", "transferencia", "mixto"] as MetodoPago[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => handleMetodoPagoChange(m)}
-                  className={`w-full p-3.5 rounded-xl border-2 text-left font-semibold text-sm transition-all ${
-                    metodoPago === m
-                      ? m === "efectivo" ? "border-accent bg-accent/10 text-accent"
-                        : m === "transferencia" ? "border-info bg-info/10 text-info"
-                        : "border-warning bg-warning/10 text-warning"
-                      : "border-border text-foreground hover:border-muted-foreground/40 hover:bg-secondary"
-                  }`}
-                >
-                  {m === "efectivo" ? "💵 Efectivo" : m === "transferencia" ? "📱 Transferencia" : "💳 Mixto"}
-                </button>
-              ))}
-            </div>
-            {metodoPago === "mixto" && (
-              <div className="space-y-3 mb-4 p-4 bg-secondary rounded-xl">
-                {[
-                  { label: "Efectivo", value: montoEfectivo, onChange: handleMontoEfectivoChange },
-                  { label: "Transferencia", value: montoTransferencia, onChange: handleMontoTransferenciaChange },
-                ].map(({ label, value, onChange }) => (
-                  <div key={label}>
-                    <label className="block text-xs font-semibold text-muted-foreground mb-1">{label}</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
-                      <input type="number" value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-full pl-7 pr-4 py-2.5 bg-muted border border-border text-foreground rounded-xl focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent text-sm" />
-                    </div>
-                  </div>
-                ))}
-                {montoEfectivo + montoTransferencia !== totalCarrito && (
-                  <p className="text-destructive text-xs text-center">La suma debe ser ${totalCarrito.toLocaleString("es-AR")}</p>
-                )}
-              </div>
-            )}
-            <div className="flex gap-3">
-              <button onClick={finalizarVenta} disabled={metodoPago === "mixto" && montoEfectivo + montoTransferencia !== totalCarrito} className="flex-1 bg-accent text-accent-foreground font-bold py-3.5 rounded-xl hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm">
-                CONFIRMAR
-              </button>
-              <button onClick={() => setModalPagoOpen(false)} className="flex-1 bg-secondary text-foreground font-medium py-3.5 rounded-xl hover:bg-border transition-colors text-sm">Cancelar</button>
-            </div>
-          </div>
-        </div>
+        <PaymentDialog
+          total={totalCarrito}
+          metodoInicial={metodoPagoInicial}
+          procesando={procesando}
+          onCancel={() => { setModalPago(false); focusSearch() }}
+          onConfirm={finalizarVenta}
+        />
       )}
 
-      {/* Modal ticket */}
-      {modalTicketOpen && ticketData && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-4">
+      {/* ─── Modal ticket / comprobante ──────────────────────────────── */}
+      {modalTicket && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-4">
           <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl">
-            <p className="font-display text-lg font-bold text-center text-foreground mb-0.5">Ticket de venta</p>
-            <p className="text-xs text-muted-foreground text-center mb-4">{ticketData.fecha}</p>
-            <div className="bg-secondary rounded-xl p-4 font-mono text-sm text-foreground mb-4 space-y-1">
-              <p className="font-bold text-center mb-2">{nombreComercio || "Mi Comercio"}</p>
+            <div className="flex flex-col items-center mb-5">
+              <div className="w-14 h-14 bg-accent/10 rounded-full flex items-center justify-center mb-3 text-2xl">✅</div>
+              <p className="font-display text-lg font-bold text-foreground">¡Venta registrada!</p>
+              {modalTicket.vuelto > 0 && (
+                <div className="mt-2 bg-accent/10 border border-accent/30 rounded-xl px-4 py-2 text-center">
+                  <p className="text-xs text-accent/80 font-semibold uppercase tracking-wide">Vuelto</p>
+                  <p className="text-2xl font-bold text-accent">${modalTicket.vuelto.toLocaleString("es-AR")}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Comprobante */}
+            <div className="bg-secondary rounded-xl p-4 font-mono text-xs text-foreground mb-4 space-y-1">
+              <p className="font-bold text-center text-sm">{nombreComercio || "Mi Comercio"}</p>
+              {tenantInfo?.domicilio && <p className="text-center text-muted-foreground">{tenantInfo.domicilio}</p>}
+              {tenantInfo?.cuit && <p className="text-center text-muted-foreground">CUIT: {tenantInfo.cuit}</p>}
+              <p className="text-center text-muted-foreground">
+                {tenantInfo?.condicionIva === "responsable_inscripto" ? "Responsable Inscripto"
+                  : tenantInfo?.condicionIva === "excento" ? "Exento de IVA" : "Monotributista"}
+              </p>
               <div className="border-t border-border my-2" />
-              {ticketData.items.map((item) => (
+              <p className="text-center font-bold text-sm">{modalTicket.tipoComprobante}</p>
+              <p className="text-center text-muted-foreground">N° {modalTicket.numeroComprobante}</p>
+              <p className="text-center text-muted-foreground">{modalTicket.fecha}</p>
+              <div className="border-t border-border my-2" />
+              {modalTicket.items.map((item) => (
                 <div key={item.producto.id} className="flex justify-between gap-2">
                   <span className="truncate">{item.producto.producto} x{item.cantidad}</span>
                   <span className="font-semibold shrink-0">${(item.producto.precioVenta * item.cantidad).toLocaleString("es-AR")}</span>
                 </div>
               ))}
               <div className="border-t border-border my-2" />
-              <div className="flex justify-between font-bold text-accent">
+              <div className="flex justify-between font-bold text-sm">
                 <span>TOTAL</span>
-                <span>${ticketData.total.toLocaleString("es-AR")}</span>
+                <span>${modalTicket.total.toLocaleString("es-AR")}</span>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Pago:{" "}
-                {ticketData.metodo === "efectivo" ? "Efectivo" :
-                 ticketData.metodo === "transferencia" ? "Transferencia" :
-                 `Mixto — Ef $${ticketData.efectivo.toLocaleString("es-AR")} / Tr $${ticketData.transferencia.toLocaleString("es-AR")}`}
+              <p className="text-muted-foreground mt-1">
+                Pago: {modalTicket.metodo === "efectivo" ? "Efectivo"
+                  : modalTicket.metodo === "transferencia" ? "Transferencia"
+                  : `Mixto — Ef $${modalTicket.efectivo.toLocaleString("es-AR")} / Tr $${modalTicket.transferencia.toLocaleString("es-AR")}`}
               </p>
             </div>
+
             <div className="flex gap-3 mb-3">
-              <button onClick={handleImprimir} className="flex-1 flex items-center justify-center gap-2 border border-border text-foreground font-semibold py-3 rounded-xl hover:bg-secondary transition-colors text-sm">
-                <Printer className="w-4 h-4" />Imprimir
+              <button onClick={() => window.print()} className="flex-1 flex items-center justify-center gap-2 border border-border text-foreground font-semibold py-3 rounded-xl hover:bg-secondary transition-colors text-sm">
+                <Printer className="w-4 h-4" /> Imprimir
               </button>
-              <button onClick={handleWhatsApp} className="flex-1 flex items-center justify-center gap-2 bg-[#25D366] text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity text-sm">
-                <MessageCircle className="w-4 h-4" />WhatsApp
+              <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(textoTicket())}`, "_blank")}
+                className="flex-1 flex items-center justify-center gap-2 bg-[#25D366] text-white font-bold py-3 rounded-xl hover:opacity-90 text-sm"
+              >
+                <MessageCircle className="w-4 h-4" /> WhatsApp
               </button>
             </div>
-            <button onClick={() => setModalTicketOpen(false)} className="w-full border border-border text-muted-foreground font-medium py-3 rounded-xl hover:bg-secondary transition-colors text-sm">
+            <button onClick={() => { setModalTicket(null); focusSearch() }} className="w-full border border-border text-muted-foreground font-medium py-3 rounded-xl hover:bg-secondary transition-colors text-sm">
               Cerrar
             </button>
           </div>
         </div>
       )}
 
-      {/* Div oculto para impresión */}
-      {ticketData && (
+      {/* Ticket oculto para impresión */}
+      {modalTicket && (
         <div id="ticket-impresion" style={{ display: "none" }}>
           <p style={{ fontWeight: "bold", textAlign: "center", fontSize: "15px" }}>{nombreComercio || "Mi Comercio"}</p>
-          <p style={{ textAlign: "center", marginBottom: "8px" }}>{ticketData.fecha}</p>
-          <p>{"─".repeat(28)}</p>
-          {ticketData.items.map((item) => (
+          {tenantInfo?.domicilio && <p style={{ textAlign: "center", fontSize: "12px" }}>{tenantInfo.domicilio}</p>}
+          {tenantInfo?.cuit && <p style={{ textAlign: "center", fontSize: "12px" }}>CUIT: {tenantInfo.cuit}</p>}
+          <p style={{ textAlign: "center", fontSize: "12px", marginBottom: "6px" }}>
+            {tenantInfo?.condicionIva === "responsable_inscripto" ? "Responsable Inscripto"
+              : tenantInfo?.condicionIva === "excento" ? "Exento de IVA" : "Monotributista"}
+          </p>
+          <p>{"─".repeat(32)}</p>
+          <p style={{ fontWeight: "bold", textAlign: "center" }}>{modalTicket.tipoComprobante}</p>
+          <p style={{ textAlign: "center" }}>N° {modalTicket.numeroComprobante}</p>
+          <p style={{ textAlign: "center", marginBottom: "6px" }}>{modalTicket.fecha}</p>
+          <p>{"─".repeat(32)}</p>
+          {modalTicket.items.map((item) => (
             <div key={item.producto.id} style={{ display: "flex", justifyContent: "space-between" }}>
               <span>{item.producto.producto} x{item.cantidad}</span>
               <span>${(item.producto.precioVenta * item.cantidad).toLocaleString("es-AR")}</span>
             </div>
           ))}
-          <p>{"─".repeat(28)}</p>
+          <p>{"─".repeat(32)}</p>
           <div style={{ display: "flex", justifyContent: "space-between", fontWeight: "bold" }}>
-            <span>TOTAL</span><span>${ticketData.total.toLocaleString("es-AR")}</span>
+            <span>TOTAL</span><span>${modalTicket.total.toLocaleString("es-AR")}</span>
           </div>
-          <p style={{ marginTop: "4px", fontSize: "12px" }}>
-            Pago:{" "}
-            {ticketData.metodo === "efectivo" ? "Efectivo" :
-             ticketData.metodo === "transferencia" ? "Transferencia" :
-             `Mixto — Ef $${ticketData.efectivo.toLocaleString("es-AR")} / Tr $${ticketData.transferencia.toLocaleString("es-AR")}`}
-          </p>
+          {modalTicket.vuelto > 0 && (
+            <p style={{ marginTop: "4px" }}>Vuelto: ${modalTicket.vuelto.toLocaleString("es-AR")}</p>
+          )}
           <p style={{ textAlign: "center", marginTop: "12px" }}>Gracias por su compra!</p>
         </div>
       )}
 
       {/* Toast */}
       {toast && (
-        <div className={`fixed bottom-24 right-4 px-4 py-3 rounded-xl shadow-2xl z-50 font-semibold text-sm max-w-[280px] border ${toast.error ? "bg-card text-foreground border-destructive" : "bg-card text-foreground border-accent"}`}>
-          {toast.mensaje}
+        <div className={`fixed bottom-28 lg:bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-xl shadow-2xl z-[60] font-semibold text-sm border-2 max-w-[90vw] whitespace-nowrap ${
+          toast.ok ? "bg-accent text-accent-foreground border-accent" : "bg-destructive text-destructive-foreground border-destructive"
+        }`} role="status">
+          {toast.msg}
         </div>
       )}
     </AppShell>

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   Download, Trash2, ChevronLeft, ChevronRight,
-  Pencil, Check, Ban, Loader2,
+  Pencil, Check, Ban, Loader2, Lock, TrendingUp, DollarSign, ShoppingBag,
 } from "lucide-react"
 import {
   getCierres, cerrarCajaHoy, getTotalesMes, getTotalesHoy,
@@ -23,6 +23,14 @@ type EditVentaState = {
 }
 
 type EditCierreState = DatosEditarCierre & { id: number }
+
+const TOOLTIP_STYLE = {
+  backgroundColor: "oklch(1 0 0)",
+  border: "1px solid oklch(0.91 0.005 80)",
+  borderRadius: "10px",
+  color: "oklch(0.14 0.003 265)",
+  fontSize: "12px",
+}
 
 export default function CajaPage() {
   const [mounted, setMounted] = useState(false)
@@ -204,8 +212,12 @@ export default function CajaPage() {
 
   const datosGanancias = [
     { name: "Ganancia", value: totalesMes.totalGanancias, color: "oklch(0.83 0.17 163)" },
-    { name: "Costo", value: totalesMes.totalCostos, color: "oklch(0.30 0.008 265)" },
+    { name: "Costo", value: totalesMes.totalCostos, color: "oklch(0.75 0.010 80)" },
   ].filter((d) => d.value > 0)
+
+  const margenHoy = totalesHoy.totalVentas > 0
+    ? Math.round((totalesHoy.totalGanancias / totalesHoy.totalVentas) * 100)
+    : 0
 
   if (!mounted) {
     return (
@@ -217,55 +229,66 @@ export default function CajaPage() {
 
   return (
     <AppShell>
-      {/* Header */}
-      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur-md border-b border-border px-4 py-3">
-        <div className="flex items-center justify-between max-w-2xl mx-auto">
-          <h1 className="font-display font-bold text-foreground text-lg">Caja</h1>
-          {cierresMesActual.length > 0 && (
-            <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-secondary hover:bg-border text-foreground px-3 py-2 rounded-xl text-xs font-semibold transition-colors">
-              <Download className="w-3.5 h-3.5" />Excel
-            </button>
-          )}
+      {/* Hero verde */}
+      <div className="bg-accent px-5 pt-8 pb-12">
+        <div className="max-w-xl mx-auto">
+          <p className="text-accent-foreground/70 text-sm mb-1">Resumen del día</p>
+          <div className="flex items-center justify-between mb-5">
+            <h1 className="font-display font-bold text-accent-foreground text-xl">Caja</h1>
+            {cierresMesActual.length > 0 && (
+              <button
+                onClick={exportarExcel}
+                className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-accent-foreground px-3 py-2 rounded-xl text-xs font-semibold transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" /> Excel
+              </button>
+            )}
+          </div>
+
+          {/* Stats cards */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { icon: ShoppingBag, label: "Ventas", value: totalesHoy.cantidadVentas, prefix: "", isNumber: true },
+              { icon: DollarSign, label: "Recaudado", value: totalesHoy.totalVentas, prefix: "$", isNumber: false },
+              { icon: TrendingUp, label: `Ganancia (${margenHoy}%)`, value: totalesHoy.totalGanancias, prefix: "$", isNumber: false },
+            ].map(({ icon: Icon, label, value, prefix, isNumber }) => (
+              <div key={label} className="bg-white/15 backdrop-blur-sm rounded-2xl px-3 py-3">
+                <Icon className="w-4 h-4 text-accent-foreground/60 mb-1.5" />
+                <p className="text-accent-foreground font-bold text-lg leading-none">
+                  {prefix}{isNumber ? value : (value as number).toLocaleString("es-AR")}
+                </p>
+                <p className="text-accent-foreground/60 text-[10px] font-semibold uppercase tracking-wide mt-1">{label}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="px-4 pt-4 max-w-2xl mx-auto w-full">
+      <div className="px-4 -mt-6 pb-10 max-w-xl mx-auto w-full space-y-4">
 
-        {/* ── KPIs hoy ── */}
-        <div className="bg-card border border-border rounded-2xl p-5 mb-4">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Hoy</p>
-
-          <div className="grid grid-cols-3 gap-3 mb-5">
-            <div className="bg-secondary rounded-xl p-3 text-center">
-              <p className="text-2xl font-bold text-foreground">{totalesHoy.cantidadVentas}</p>
-              <p className="text-[10px] uppercase text-muted-foreground font-semibold tracking-wide mt-1">Ventas</p>
-            </div>
-            <div className="bg-secondary rounded-xl p-3 text-center">
-              <p className="text-xl font-bold text-foreground">${totalesHoy.totalVentas.toLocaleString("es-AR")}</p>
-              <p className="text-[10px] uppercase text-muted-foreground font-semibold tracking-wide mt-1">Total</p>
-            </div>
-            <div className="bg-accent/10 border border-accent/20 rounded-xl p-3 text-center">
-              <p className="text-xl font-bold text-accent">${totalesHoy.totalGanancias.toLocaleString("es-AR")}</p>
-              <p className="text-[10px] uppercase text-accent/60 font-semibold tracking-wide mt-1">Ganancia</p>
-            </div>
+        {/* ── Ventas del día + cerrar caja ── */}
+        <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm">
+          <div className="px-5 py-4 border-b border-border">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              {ventasHoy.length > 0 ? `${ventasHoy.length} venta${ventasHoy.length !== 1 ? "s" : ""} hoy` : "Sin ventas hoy"}
+            </p>
           </div>
 
-          {/* Ventas del día (editables) */}
           {ventasHoy.length > 0 && (
-            <div className="space-y-2 mb-4 max-h-56 overflow-y-auto">
+            <div className="divide-y divide-border max-h-56 overflow-y-auto">
               {ventasHoy.map((v) => (
-                <div key={v.id} className="flex items-center justify-between p-3 bg-secondary rounded-xl gap-2">
+                <div key={v.id} className="flex items-center px-5 py-3 gap-3 hover:bg-secondary/30 transition-colors">
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-foreground text-sm truncate">
-                      {v.producto} <span className="text-muted-foreground font-normal">x{v.cantidad}</span>
+                      {v.producto} <span className="text-muted-foreground font-normal">×{v.cantidad}</span>
                     </p>
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="text-xs text-accent font-medium">${v.totalVenta.toLocaleString("es-AR")}</span>
                       {v.metodoPago && (
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
-                          v.metodoPago === "efectivo" ? "bg-accent/20 text-accent"
-                          : v.metodoPago === "transferencia" ? "bg-info/20 text-info"
-                          : "bg-warning/20 text-warning"
+                          v.metodoPago === "efectivo" ? "bg-accent/15 text-accent"
+                          : v.metodoPago === "transferencia" ? "bg-[oklch(0.55_0.15_230/0.15)] text-[oklch(0.45_0.15_230)]"
+                          : "bg-warning/15 text-warning-foreground"
                         }`}>
                           {v.metodoPago === "mixto"
                             ? `Mixto $${v.montoEfectivo?.toLocaleString("es-AR")}/$${v.montoTransferencia?.toLocaleString("es-AR")}`
@@ -275,10 +298,10 @@ export default function CajaPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => abrirEditarVenta(v)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-border rounded-lg transition-colors">
+                    <button onClick={() => abrirEditarVenta(v)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors">
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
-                    <button onClick={() => handleEliminarVenta(v.id)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-border rounded-lg transition-colors">
+                    <button onClick={() => handleEliminarVenta(v.id)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-secondary rounded-lg transition-colors">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -287,22 +310,25 @@ export default function CajaPage() {
             </div>
           )}
 
-          <button
-            onClick={handleCerrarCaja}
-            disabled={totalesHoy.cantidadVentas === 0}
-            className="w-full bg-accent text-accent-foreground font-bold py-4 rounded-xl hover:opacity-90 active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_oklch(0.83_0.17_163/0.25)] text-sm"
-          >
-            CERRAR CAJA DEL DÍA
-          </button>
+          <div className="px-5 py-4">
+            <button
+              onClick={handleCerrarCaja}
+              disabled={totalesHoy.cantidadVentas === 0}
+              className="w-full flex items-center justify-center gap-2 bg-accent text-accent-foreground font-bold py-4 rounded-xl hover:opacity-90 active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_oklch(0.83_0.17_163/0.25)] text-sm"
+            >
+              <Lock className="w-4 h-4" />
+              CERRAR CAJA DEL DÍA
+            </button>
+          </div>
         </div>
 
         {/* ── Selector mes ── */}
-        <div className="flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3 mb-4">
-          <button onClick={() => cambiarMes(-1)} className="p-2 hover:bg-secondary rounded-lg transition-colors active:scale-95">
+        <div className="bg-card border border-border rounded-2xl flex items-center justify-between px-4 py-3">
+          <button onClick={() => cambiarMes(-1)} className="p-2 hover:bg-secondary rounded-xl transition-colors active:scale-95">
             <ChevronLeft className="w-5 h-5 text-foreground" />
           </button>
           <p className="font-display font-bold text-foreground">{meses[mesActual - 1]} {anioActual}</p>
-          <button onClick={() => cambiarMes(1)} className="p-2 hover:bg-secondary rounded-lg transition-colors active:scale-95">
+          <button onClick={() => cambiarMes(1)} className="p-2 hover:bg-secondary rounded-xl transition-colors active:scale-95">
             <ChevronRight className="w-5 h-5 text-foreground" />
           </button>
         </div>
@@ -310,41 +336,45 @@ export default function CajaPage() {
         {cierresMesActual.length > 0 ? (
           <>
             {/* ── Resumen mensual ── */}
-            <div className="bg-card border border-border rounded-2xl p-5 mb-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Resumen del Mes</p>
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="bg-secondary rounded-xl p-4 text-center">
-                  <p className="text-2xl font-bold text-foreground">${totalesMes.totalVentas.toLocaleString("es-AR")}</p>
-                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide mt-1">Total Ventas</p>
-                </div>
-                <div className="bg-accent/10 border border-accent/20 rounded-xl p-4 text-center">
-                  <p className="text-2xl font-bold text-accent">${totalesMes.totalGanancias.toLocaleString("es-AR")}</p>
-                  <p className="text-[10px] text-accent/60 uppercase font-semibold tracking-wide mt-1">
-                    Ganancia {totalesMes.totalVentas > 0 ? `(${Math.round(totalesMes.totalGanancias / totalesMes.totalVentas * 100)}%)` : ""}
-                  </p>
-                </div>
+            <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-5 py-4 border-b border-border">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Resumen del Mes</p>
               </div>
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="bg-secondary rounded-xl p-3">
-                  <p className="text-lg font-bold text-foreground">{totalesMes.diasCerrados}</p>
-                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide mt-0.5">Días</p>
+              <div className="p-5 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-secondary rounded-xl p-4 text-center">
+                    <p className="text-2xl font-bold text-foreground">${totalesMes.totalVentas.toLocaleString("es-AR")}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide mt-1">Total Ventas</p>
+                  </div>
+                  <div className="bg-accent/10 border border-accent/20 rounded-xl p-4 text-center">
+                    <p className="text-2xl font-bold text-accent">${totalesMes.totalGanancias.toLocaleString("es-AR")}</p>
+                    <p className="text-[10px] text-accent/60 uppercase font-semibold tracking-wide mt-1">
+                      Ganancia {totalesMes.totalVentas > 0 ? `(${Math.round(totalesMes.totalGanancias / totalesMes.totalVentas * 100)}%)` : ""}
+                    </p>
+                  </div>
                 </div>
-                <div className="bg-secondary rounded-xl p-3">
-                  <p className="text-lg font-bold text-foreground">{totalesMes.cantidadVentas}</p>
-                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide mt-0.5">Ventas</p>
-                </div>
-                <div className="bg-secondary rounded-xl p-3">
-                  <p className="text-lg font-bold text-foreground">${totalesMes.totalCostos.toLocaleString("es-AR")}</p>
-                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide mt-0.5">Costos</p>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="bg-secondary rounded-xl p-3">
+                    <p className="text-lg font-bold text-foreground">{totalesMes.diasCerrados}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide mt-0.5">Días</p>
+                  </div>
+                  <div className="bg-secondary rounded-xl p-3">
+                    <p className="text-lg font-bold text-foreground">{totalesMes.cantidadVentas}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide mt-0.5">Ventas</p>
+                  </div>
+                  <div className="bg-secondary rounded-xl p-3">
+                    <p className="text-lg font-bold text-foreground">${totalesMes.totalCostos.toLocaleString("es-AR")}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wide mt-0.5">Costos</p>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Gráficos */}
             {(datosGrafico.length > 0 || datosGanancias.length > 0) && (
-              <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="grid grid-cols-2 gap-3">
                 {datosGrafico.length > 0 && (
-                  <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="bg-card border border-border rounded-2xl p-4">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2 text-center">Métodos de Pago</p>
                     <div className="h-28">
                       <ResponsiveContainer width="100%" height="100%">
@@ -354,19 +384,19 @@ export default function CajaPage() {
                           </Pie>
                           <Tooltip
                             formatter={(v: number) => [`$${v.toLocaleString("es-AR")}`, ""]}
-                            contentStyle={{ backgroundColor: "oklch(0.13 0.010 265)", border: "1px solid oklch(0.21 0.008 265)", borderRadius: "10px", color: "oklch(0.96 0.002 265)", fontSize: "12px" }}
+                            contentStyle={TOOLTIP_STYLE}
                           />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
                     <div className="flex justify-center gap-3 mt-1">
                       <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-accent" /><span className="text-[10px] text-muted-foreground">Efectivo</span></div>
-                      <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-info" /><span className="text-[10px] text-muted-foreground">Transf.</span></div>
+                      <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "oklch(0.65 0.15 230)" }} /><span className="text-[10px] text-muted-foreground">Transf.</span></div>
                     </div>
                   </div>
                 )}
                 {datosGanancias.length > 0 && (
-                  <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="bg-card border border-border rounded-2xl p-4">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2 text-center">Ganancia vs Costo</p>
                     <div className="h-28">
                       <ResponsiveContainer width="100%" height="100%">
@@ -376,14 +406,14 @@ export default function CajaPage() {
                           </Pie>
                           <Tooltip
                             formatter={(v: number) => [`$${v.toLocaleString("es-AR")}`, ""]}
-                            contentStyle={{ backgroundColor: "oklch(0.13 0.010 265)", border: "1px solid oklch(0.21 0.008 265)", borderRadius: "10px", color: "oklch(0.96 0.002 265)", fontSize: "12px" }}
+                            contentStyle={TOOLTIP_STYLE}
                           />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
                     <div className="flex justify-center gap-3 mt-1">
                       <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-accent" /><span className="text-[10px] text-muted-foreground">Ganancia</span></div>
-                      <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-muted" /><span className="text-[10px] text-muted-foreground">Costo</span></div>
+                      <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "oklch(0.75 0.010 80)" }} /><span className="text-[10px] text-muted-foreground">Costo</span></div>
                     </div>
                   </div>
                 )}
@@ -391,13 +421,15 @@ export default function CajaPage() {
             )}
 
             {/* ── Historial del mes (editable) ── */}
-            <div className="bg-card border border-border rounded-2xl p-5 mb-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Historial del Mes</p>
-              <div className="space-y-3">
+            <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-5 py-4 border-b border-border">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Historial del Mes</p>
+              </div>
+              <div className="divide-y divide-border">
                 {cierresMesActual.map((cierre) => {
                   const isEditing = editCierre?.id === cierre.id
                   return (
-                    <div key={cierre.id} className="bg-secondary rounded-xl p-4">
+                    <div key={cierre.id} className="px-5 py-4">
                       {isEditing ? (
                         <div className="space-y-3">
                           <p className="font-semibold text-foreground text-sm mb-2">{cierre.fecha}</p>
@@ -417,7 +449,7 @@ export default function CajaPage() {
                                     type="number"
                                     value={(editCierre as any)[key]}
                                     onChange={(e) => setEditCierre({ ...editCierre!, [key]: Number(e.target.value) })}
-                                    className="w-full pl-5 pr-2 py-2 bg-muted border border-border text-foreground rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
+                                    className="w-full pl-5 pr-2 py-2 bg-secondary border border-border text-foreground rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
                                   />
                                 </div>
                               </div>
@@ -427,7 +459,7 @@ export default function CajaPage() {
                             <button onClick={guardarEditarCierre} className="flex-1 flex items-center justify-center gap-1.5 bg-accent text-accent-foreground font-bold py-2.5 rounded-xl hover:opacity-90 transition-opacity text-xs">
                               <Check className="w-3.5 h-3.5" />Guardar
                             </button>
-                            <button onClick={() => setEditCierre(null)} className="flex-1 flex items-center justify-center gap-1.5 bg-muted text-foreground font-bold py-2.5 rounded-xl hover:bg-border transition-colors text-xs">
+                            <button onClick={() => setEditCierre(null)} className="flex-1 flex items-center justify-center gap-1.5 bg-secondary text-foreground font-bold py-2.5 rounded-xl hover:bg-border transition-colors text-xs">
                               <Ban className="w-3.5 h-3.5" />Cancelar
                             </button>
                           </div>
@@ -439,7 +471,7 @@ export default function CajaPage() {
                             <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5">
                               <span>{cierre.cantidadVentas} ventas</span>
                               <span className="text-accent">E: ${cierre.efectivo.toLocaleString("es-AR")}</span>
-                              <span className="text-info">T: ${cierre.transferencia.toLocaleString("es-AR")}</span>
+                              <span style={{ color: "oklch(0.45 0.15 230)" }}>T: ${cierre.transferencia.toLocaleString("es-AR")}</span>
                             </div>
                           </div>
                           <div className="text-right mr-2 shrink-0">
@@ -447,10 +479,10 @@ export default function CajaPage() {
                             <p className="text-xs text-accent">+${cierre.totalGanancias.toLocaleString("es-AR")}</p>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
-                            <button onClick={() => abrirEditarCierre(cierre)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-border rounded-lg transition-colors">
+                            <button onClick={() => abrirEditarCierre(cierre)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors">
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={() => handleEliminarCierre(cierre.id)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-border rounded-lg transition-colors">
+                            <button onClick={() => handleEliminarCierre(cierre.id)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-secondary rounded-lg transition-colors">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
@@ -463,10 +495,11 @@ export default function CajaPage() {
             </div>
           </>
         ) : (
-          <div className="bg-card border border-border rounded-2xl p-10 text-center mb-4">
+          <div className="bg-card border border-border rounded-2xl p-10 text-center">
             <div className="w-14 h-14 bg-secondary rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Download className="w-6 h-6 text-muted-foreground/50" />
+              <Lock className="w-6 h-6 text-muted-foreground/50" />
             </div>
+            <p className="font-semibold text-foreground text-sm mb-1">Sin cierres registrados</p>
             <p className="text-muted-foreground text-sm">No hay cierres en {meses[mesActual - 1]} {anioActual}</p>
           </div>
         )}
@@ -506,8 +539,8 @@ export default function CajaPage() {
                   className={`w-full p-3 rounded-xl border-2 text-left font-semibold text-sm transition-all ${
                     editVenta.metodoPago === m
                       ? m === "efectivo" ? "border-accent bg-accent/10 text-accent"
-                        : m === "transferencia" ? "border-info bg-info/10 text-info"
-                        : "border-warning bg-warning/10 text-warning"
+                        : m === "transferencia" ? "border-[oklch(0.65_0.15_230)] bg-[oklch(0.65_0.15_230/0.1)] text-[oklch(0.45_0.15_230)]"
+                        : "border-warning bg-warning/10 text-warning-foreground"
                       : "border-border text-foreground hover:border-muted-foreground/40 hover:bg-secondary"
                   }`}
                 >
@@ -530,7 +563,7 @@ export default function CajaPage() {
                         type="number"
                         value={value}
                         onChange={(e) => setEditVenta({ ...editVenta, [key]: Number(e.target.value) })}
-                        className="w-full pl-8 pr-4 py-2.5 bg-muted border border-border text-foreground rounded-xl focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent text-sm"
+                        className="w-full pl-8 pr-4 py-2.5 bg-card border border-border text-foreground rounded-xl focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent text-sm"
                       />
                     </div>
                   </div>
