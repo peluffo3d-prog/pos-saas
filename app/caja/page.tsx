@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   Download, Trash2, ChevronLeft, ChevronRight,
-  Pencil, Check, Ban, Loader2, Lock, TrendingUp, DollarSign, ShoppingBag,
+  Pencil, Check, Ban, Loader2, Lock, TrendingUp, DollarSign, ShoppingBag, MessageCircle,
 } from "lucide-react"
 import {
   getCierres, cerrarCajaHoy, getTotalesMes, getTotalesHoy,
   getVentasHoy, eliminarCierre, editarCierre, editarVenta, eliminarVenta,
+  getNombreComercio,
   type CierreCaja, type Venta, type MetodoPago, type DatosEditarCierre,
 } from "@/lib/store"
 import * as XLSX from "xlsx"
@@ -43,22 +44,32 @@ export default function CajaPage() {
     totalVentas: 0, totalCostos: 0, totalGanancias: 0,
     totalEfectivo: 0, totalTransferencia: 0, cantidadVentas: 0, diasCerrados: 0,
   })
+  const [nombreComercio, setNombreComercio] = useState("")
   const [toast, setToast] = useState<{ mensaje: string; error: boolean } | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [cierreExitoso, setCierreExitoso] = useState<{
+    totalVentas: number
+    totalGanancias: number
+    cantidadVentas: number
+    efectivo: number
+    transferencia: number
+  } | null>(null)
   const [editVenta, setEditVenta] = useState<EditVentaState | null>(null)
   const [editCierre, setEditCierre] = useState<EditCierreState | null>(null)
 
   const cargarDatos = useCallback(async () => {
-    const [c, vHoy, totHoy, totMes] = await Promise.all([
+    const [c, vHoy, totHoy, totMes, nombre] = await Promise.all([
       getCierres(),
       getVentasHoy(),
       getTotalesHoy(),
       getTotalesMes(mesActual, anioActual),
+      getNombreComercio(),
     ])
     setCierres(c)
     setVentasHoy(vHoy)
     setTotalesHoy(totHoy)
     setTotalesMes(totMes)
+    setNombreComercio(nombre)
   }, [mesActual, anioActual])
 
   useEffect(() => {
@@ -135,11 +146,42 @@ export default function CajaPage() {
     setConfirmOpen(true)
   }
 
+  const generarMensajeWhatsApp = (datos: {
+    totalVentas: number; totalGanancias: number; cantidadVentas: number
+    efectivo: number; transferencia: number
+  }) => {
+    const hoy = new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })
+    const margen = datos.totalVentas > 0 ? Math.round((datos.totalGanancias / datos.totalVentas) * 100) : 0
+    return [
+      `*${nombreComercio || "Mi Comercio"}* — Cierre del ${hoy}`,
+      ``,
+      `📦 Ventas: ${datos.cantidadVentas}`,
+      `💰 Total recaudado: $${datos.totalVentas.toLocaleString("es-AR")}`,
+      ``,
+      `💵 Efectivo: $${datos.efectivo.toLocaleString("es-AR")}`,
+      `📲 Transf./MP: $${datos.transferencia.toLocaleString("es-AR")}`,
+      ``,
+      `📈 Ganancia: $${datos.totalGanancias.toLocaleString("es-AR")} (${margen}%)`,
+    ].join("\n")
+  }
+
   const confirmarCierre = async () => {
+    const efectivo = ventasHoy.reduce((sum, v) => {
+      if (v.metodoPago === "efectivo") return sum + v.totalVenta
+      if (v.metodoPago === "mixto") return sum + (v.montoEfectivo ?? 0)
+      return sum
+    }, 0)
+    const transferencia = ventasHoy.reduce((sum, v) => {
+      if (v.metodoPago === "transferencia" || v.metodoPago === "mercadopago") return sum + v.totalVenta
+      if (v.metodoPago === "mixto") return sum + (v.montoTransferencia ?? 0)
+      return sum
+    }, 0)
+    const snapshot = { ...totalesHoy, efectivo, transferencia }
+
     const resultado = await cerrarCajaHoy()
     if (resultado.success) {
       await cargarDatos()
-      mostrarToast(resultado.mensaje)
+      setCierreExitoso(snapshot)
     } else {
       mostrarToast(resultado.mensaje, true)
     }
@@ -578,6 +620,52 @@ export default function CajaPage() {
               <button onClick={guardarEditarVenta} className="flex-1 bg-accent text-accent-foreground font-bold py-3 rounded-xl hover:opacity-90 active:scale-[0.98] transition-all text-sm">GUARDAR</button>
               <button onClick={() => setEditVenta(null)} className="flex-1 bg-secondary text-foreground font-medium py-3 rounded-xl hover:bg-border transition-colors text-sm">Cancelar</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal éxito cierre + WhatsApp */}
+      {cierreExitoso && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <div className="w-14 h-14 bg-accent/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Check className="w-7 h-7 text-accent" />
+            </div>
+            <p className="font-display text-xl font-bold text-center text-foreground mb-1">¡Caja cerrada!</p>
+            <p className="text-muted-foreground text-center text-sm mb-5">
+              {cierreExitoso.cantidadVentas} venta{cierreExitoso.cantidadVentas !== 1 ? "s" : ""} por{" "}
+              <span className="text-accent font-bold">${cierreExitoso.totalVentas.toLocaleString("es-AR")}</span>
+            </p>
+            <div className="bg-secondary rounded-xl p-4 space-y-2 mb-5 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Efectivo</span>
+                <span className="font-semibold text-foreground">${cierreExitoso.efectivo.toLocaleString("es-AR")}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Transf./MP</span>
+                <span className="font-semibold text-foreground">${cierreExitoso.transferencia.toLocaleString("es-AR")}</span>
+              </div>
+              <div className="flex justify-between border-t border-border pt-2">
+                <span className="text-muted-foreground">Ganancia</span>
+                <span className="font-bold text-accent">${cierreExitoso.totalGanancias.toLocaleString("es-AR")}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                const msg = generarMensajeWhatsApp(cierreExitoso)
+                window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank")
+              }}
+              className="w-full flex items-center justify-center gap-2 bg-[#25d366] text-white font-bold py-4 rounded-xl hover:opacity-90 active:scale-[0.98] transition-all mb-3"
+            >
+              <MessageCircle className="w-5 h-5" />
+              Compartir resumen por WhatsApp
+            </button>
+            <button
+              onClick={() => setCierreExitoso(null)}
+              className="w-full bg-secondary text-foreground font-medium py-3 rounded-xl hover:bg-border transition-colors text-sm"
+            >
+              Cerrar
+            </button>
           </div>
         </div>
       )}
