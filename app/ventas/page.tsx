@@ -12,6 +12,8 @@ const metodoBadge = (v: Venta) => {
     return <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent font-bold uppercase tracking-wide">Efectivo</span>
   if (v.metodoPago === "transferencia")
     return <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[oklch(0.55_0.15_230/0.15)] text-[oklch(0.45_0.15_230)] font-bold uppercase tracking-wide">Transfer.</span>
+  if (v.metodoPago === "mercadopago")
+    return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide" style={{ backgroundColor: "#009ee315", color: "#009ee3" }}>Mercado Pago</span>
   return (
     <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-warning/15 text-warning-foreground font-bold uppercase tracking-wide">
       Mixto ${v.montoEfectivo?.toLocaleString("es-AR")}/${v.montoTransferencia?.toLocaleString("es-AR")}

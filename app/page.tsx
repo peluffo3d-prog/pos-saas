@@ -452,6 +452,7 @@ export default function Home() {
           total={totalCarrito}
           metodoInicial={metodoPagoInicial}
           procesando={procesando}
+          mpLink={tenantInfo?.mercadoPagoLink}
           onCancel={() => { setModalPago(false); focusSearch() }}
           onConfirm={finalizarVenta}
         />

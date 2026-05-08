@@ -1,38 +1,45 @@
 "use client"
 
 import { useState, useEffect, useRef, useMemo } from "react"
+import QRCode from "react-qr-code"
 import type { MetodoPago, DatosPago } from "@/lib/store"
-import { Loader2 } from "lucide-react"
+import { Loader2, Settings } from "lucide-react"
 
 type Props = {
   total: number
   metodoInicial: MetodoPago
   procesando: boolean
+  mpLink?: string
   onCancel: () => void
   onConfirm: (datos: DatosPago, recibido: number) => void
 }
 
-// Billetes argentinos en circulación (mayo 2026)
 const BILLETES = [1000, 2000, 5000, 10000, 20000, 50000]
 
-export function PaymentDialog({ total, metodoInicial, procesando, onCancel, onConfirm }: Props) {
-  const [metodo, setMetodo]         = useState<MetodoPago>(metodoInicial)
-  const [recibido, setRecibido]     = useState<number>(total)
+const METODOS: { id: MetodoPago; label: string; key: string }[] = [
+  { id: "efectivo",      label: "Efectivo",      key: "F2" },
+  { id: "transferencia", label: "Transfer.",      key: "F3" },
+  { id: "mercadopago",   label: "Mercado Pago",   key: "F4" },
+  { id: "mixto",         label: "Mixto",          key: "F5" },
+]
+
+export function PaymentDialog({ total, metodoInicial, procesando, mpLink, onCancel, onConfirm }: Props) {
+  const [metodo, setMetodo]          = useState<MetodoPago>(metodoInicial)
+  const [recibido, setRecibido]      = useState<number>(total)
   const [montoTransfer, setTransfer] = useState<number>(0)
   const recibidoRef = useRef<HTMLInputElement>(null)
 
+  const resetMontos = (m: MetodoPago) => {
+    if (m === "efectivo") { setRecibido(total); setTransfer(0) }
+    else if (m === "transferencia" || m === "mercadopago") { setRecibido(0); setTransfer(total) }
+    else { const mitad = Math.floor(total / 2); setRecibido(mitad); setTransfer(total - mitad) }
+  }
+
   useEffect(() => {
     setMetodo(metodoInicial)
-    if (metodoInicial === "efectivo") {
-      setRecibido(total); setTransfer(0)
-    } else if (metodoInicial === "transferencia") {
-      setRecibido(0); setTransfer(total)
-    } else {
-      const mitad = Math.floor(total / 2)
-      setRecibido(mitad); setTransfer(total - mitad)
-    }
+    resetMontos(metodoInicial)
     requestAnimationFrame(() => recibidoRef.current?.focus())
-  }, [metodoInicial, total])
+  }, [metodoInicial, total]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const vuelto = useMemo(
     () => (metodo === "efectivo" ? Math.max(0, recibido - total) : 0),
@@ -47,7 +54,7 @@ export function PaymentDialog({ total, metodoInicial, procesando, onCancel, onCo
   const puedeConfirmar = useMemo(() => {
     if (procesando) return false
     if (metodo === "efectivo") return recibido >= total
-    if (metodo === "transferencia") return true
+    if (metodo === "transferencia" || metodo === "mercadopago") return true
     return sumaMixtoOk && recibido + montoTransfer > 0
   }, [metodo, recibido, montoTransfer, total, sumaMixtoOk, procesando])
 
@@ -56,18 +63,20 @@ export function PaymentDialog({ total, metodoInicial, procesando, onCancel, onCo
     const datos: DatosPago = {
       metodoPago: metodo,
       montoEfectivo:
-        metodo === "transferencia" ? 0 : metodo === "mixto" ? recibido : Math.min(recibido, total),
+        metodo === "transferencia" || metodo === "mercadopago" ? 0
+        : metodo === "mixto" ? recibido
+        : Math.min(recibido, total),
       montoTransferencia:
-        metodo === "efectivo" ? 0 : metodo === "mixto" ? montoTransfer : total,
+        metodo === "efectivo" ? 0
+        : metodo === "mixto" ? montoTransfer
+        : total,
     }
     onConfirm(datos, recibido)
   }
 
   const cambiarMetodo = (m: MetodoPago) => {
     setMetodo(m)
-    if (m === "efectivo") { setRecibido(total); setTransfer(0) }
-    else if (m === "transferencia") { setRecibido(0); setTransfer(total) }
-    else { const mitad = Math.floor(total / 2); setRecibido(mitad); setTransfer(total - mitad) }
+    resetMontos(m)
   }
 
   useEffect(() => {
@@ -76,7 +85,8 @@ export function PaymentDialog({ total, metodoInicial, procesando, onCancel, onCo
       else if (e.key === "Enter") { e.preventDefault(); if (puedeConfirmar) confirmar() }
       else if (e.key === "F2") { e.preventDefault(); cambiarMetodo("efectivo") }
       else if (e.key === "F3") { e.preventDefault(); cambiarMetodo("transferencia") }
-      else if (e.key === "F4") { e.preventDefault(); cambiarMetodo("mixto") }
+      else if (e.key === "F4") { e.preventDefault(); cambiarMetodo("mercadopago") }
+      else if (e.key === "F5") { e.preventDefault(); cambiarMetodo("mixto") }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -96,26 +106,57 @@ export function PaymentDialog({ total, metodoInicial, procesando, onCancel, onCo
         </header>
 
         <div className="p-5 space-y-4 overflow-y-auto">
-          {/* Métodos de pago */}
-          <div className="grid grid-cols-3 gap-2">
-            {(["efectivo", "transferencia", "mixto"] as MetodoPago[]).map((m, i) => (
+          {/* Métodos de pago — 2x2 */}
+          <div className="grid grid-cols-2 gap-2">
+            {METODOS.map(({ id, label, key }) => (
               <button
-                key={m}
-                onClick={() => cambiarMetodo(m)}
-                className={`h-16 rounded-xl border-2 font-bold text-sm transition-all ${
-                  metodo === m
-                    ? "border-accent bg-accent/10 text-accent"
+                key={id}
+                onClick={() => cambiarMetodo(id)}
+                className={`h-14 rounded-xl border-2 font-bold text-sm transition-all flex flex-col items-center justify-center gap-0.5 ${
+                  metodo === id
+                    ? id === "mercadopago"
+                      ? "border-[#009ee3] bg-[#009ee3]/10 text-[#009ee3]"
+                      : "border-accent bg-accent/10 text-accent"
                     : "border-border hover:border-accent/40 text-foreground"
                 }`}
               >
-                <span className="block text-[9px] font-mono opacity-50 mb-0.5">F{i + 2}</span>
-                {m === "efectivo" ? "Efectivo" : m === "transferencia" ? "Transfer." : "Mixto"}
+                <span className="text-[9px] font-mono opacity-40">{key}</span>
+                <span>{label}</span>
               </button>
             ))}
           </div>
 
+          {/* QR Mercado Pago */}
+          {metodo === "mercadopago" && (
+            <div className="flex flex-col items-center py-3">
+              {mpLink ? (
+                <>
+                  <div className="bg-white p-4 rounded-2xl shadow-sm mb-3">
+                    <QRCode value={mpLink} size={180} />
+                  </div>
+                  <p className="text-sm font-semibold text-foreground mb-0.5">
+                    ${total.toLocaleString("es-AR")}
+                  </p>
+                  <p className="text-xs text-muted-foreground text-center">
+                    El cliente escanea con la app de Mercado Pago
+                  </p>
+                </>
+              ) : (
+                <div className="w-full bg-secondary border border-border rounded-2xl p-5 text-center">
+                  <div className="w-12 h-12 bg-[#009ee3]/10 rounded-xl flex items-center justify-center mx-auto mb-3">
+                    <Settings className="w-5 h-5 text-[#009ee3]" />
+                  </div>
+                  <p className="text-sm font-semibold text-foreground mb-1">Link de MP no configurado</p>
+                  <p className="text-xs text-muted-foreground">
+                    Ir a <strong>Configuración → Mercado Pago</strong> y pegá tu link de cobro
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Campo efectivo recibido */}
-          {metodo !== "transferencia" && (
+          {metodo !== "transferencia" && metodo !== "mercadopago" && (
             <div>
               <label className="block text-sm font-semibold text-muted-foreground mb-1.5">
                 {metodo === "mixto" ? "Efectivo recibido" : "Monto recibido"}
@@ -133,7 +174,6 @@ export function PaymentDialog({ total, metodoInicial, procesando, onCancel, onCo
                 />
               </div>
 
-              {/* Presets de billetes */}
               {metodo === "efectivo" && (
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   {billetesUtil.map((b) => (
@@ -195,14 +235,14 @@ export function PaymentDialog({ total, metodoInicial, procesando, onCancel, onCo
         <footer className="p-5 border-t border-border flex gap-3">
           <button
             onClick={onCancel}
-            className="flex-1 h-16 rounded-xl border-2 border-border font-bold text-base hover:bg-secondary transition-colors"
+            className="flex-1 h-14 rounded-xl border-2 border-border font-bold text-sm hover:bg-secondary transition-colors"
           >
             Cancelar (Esc)
           </button>
           <button
             onClick={confirmar}
             disabled={!puedeConfirmar}
-            className="flex-[2] h-16 rounded-xl bg-accent text-accent-foreground font-bold text-xl shadow-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
+            className="flex-[2] h-14 rounded-xl bg-accent text-accent-foreground font-bold text-lg shadow-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
           >
             {procesando ? <Loader2 className="w-5 h-5 animate-spin" /> : "CONFIRMAR (Enter)"}
           </button>

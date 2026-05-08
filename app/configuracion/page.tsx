@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Settings, Loader2, CheckCircle2, ChevronDown, Store, FileText, MapPin, Hash } from "lucide-react"
+import { Settings, Loader2, CheckCircle2, ChevronDown, Store, FileText, MapPin, Hash, QrCode } from "lucide-react"
 import { getTenantInfo, actualizarTenant, type TenantInfo } from "@/lib/store"
 import { AppShell } from "@/components/app-shell"
 
@@ -25,6 +25,7 @@ export default function ConfiguracionPage() {
   const [condicionIva, setCondicionIva] = useState("monotributista")
   const [domicilio, setDomicilio] = useState("")
   const [puntoVenta, setPuntoVenta] = useState("1")
+  const [mpLink, setMpLink] = useState("")
   const [loading, setLoading] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [guardado, setGuardado] = useState(false)
@@ -38,6 +39,7 @@ export default function ConfiguracionPage() {
         setCondicionIva(data.condicionIva ?? "monotributista")
         setDomicilio(data.domicilio ?? "")
         setPuntoVenta(String(data.puntoVenta ?? 1))
+        setMpLink(data.mercadoPagoLink ?? "")
       }
       setLoading(false)
     })
@@ -52,6 +54,7 @@ export default function ConfiguracionPage() {
       condicionIva,
       domicilio: domicilio.trim() || undefined,
       puntoVenta: parseInt(puntoVenta) || 1,
+      mercadoPagoLink: mpLink.trim() || undefined,
     })
     setGuardando(false)
     setGuardado(true)
@@ -156,6 +159,37 @@ export default function ConfiguracionPage() {
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Mercado Pago */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-border bg-secondary/40">
+              <QrCode className="w-4 h-4" style={{ color: "#009ee3" }} />
+              <p className="font-bold text-foreground text-sm">Mercado Pago</p>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Pegá tu link de cobro de Mercado Pago. Al cobrar con MP en el POS, aparece el QR para que el cliente escanee.
+              </p>
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-muted-foreground mb-2 tracking-widest">
+                  Link de cobro (mpago.la/... o link.mercadopago.com.ar/...)
+                </label>
+                <input
+                  type="url"
+                  value={mpLink}
+                  onChange={(e) => setMpLink(e.target.value)}
+                  className="w-full border border-border bg-secondary text-foreground rounded-xl px-4 py-3 focus:border-[#009ee3] focus:ring-2 focus:ring-[#009ee3]/20 outline-none transition-all text-sm"
+                  placeholder="https://mpago.la/xxxxxxx"
+                />
+              </div>
+              {mpLink.trim() && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-[#009ee3]/10 border border-[#009ee3]/20 rounded-xl">
+                  <div className="w-2 h-2 rounded-full bg-[#009ee3]" />
+                  <p className="text-xs font-semibold" style={{ color: "#009ee3" }}>QR listo para usar en el cobro</p>
+                </div>
+              )}
             </div>
           </div>
 

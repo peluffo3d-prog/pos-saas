@@ -12,7 +12,7 @@ export interface StockItem {
   categoria?: CategoriaKiosco
 }
 
-export type MetodoPago = "efectivo" | "transferencia" | "mixto"
+export type MetodoPago = "efectivo" | "transferencia" | "mercadopago" | "mixto"
 
 export interface Venta {
   id: number
@@ -102,6 +102,7 @@ export interface TenantInfo {
   domicilio?: string
   puntoVenta: number
   ultimoNumeroComprobante: number
+  mercadoPagoLink?: string
 }
 
 export async function getTenantInfo(): Promise<TenantInfo | null> {
@@ -110,7 +111,7 @@ export async function getTenantInfo(): Promise<TenantInfo | null> {
 
   const { data } = await supabase()
     .from("tenants")
-    .select("id, nombre, cuit, condicion_iva, domicilio, punto_venta, ultimo_numero_comprobante")
+    .select("id, nombre, cuit, condicion_iva, domicilio, punto_venta, ultimo_numero_comprobante, mercado_pago_link")
     .eq("id", tenantId)
     .single()
 
@@ -123,6 +124,7 @@ export async function getTenantInfo(): Promise<TenantInfo | null> {
     domicilio: data.domicilio ?? undefined,
     puntoVenta: data.punto_venta ?? 1,
     ultimoNumeroComprobante: data.ultimo_numero_comprobante ?? 0,
+    mercadoPagoLink: data.mercado_pago_link ?? undefined,
   }
 }
 
@@ -132,6 +134,7 @@ export async function actualizarTenant(datos: {
   condicionIva?: string
   domicilio?: string
   puntoVenta?: number
+  mercadoPagoLink?: string
 }): Promise<void> {
   const tenantId = await getTenantId()
   if (!tenantId) return
@@ -144,6 +147,7 @@ export async function actualizarTenant(datos: {
       ...(datos.condicionIva !== undefined && { condicion_iva: datos.condicionIva }),
       ...(datos.domicilio !== undefined && { domicilio: datos.domicilio }),
       ...(datos.puntoVenta !== undefined && { punto_venta: datos.puntoVenta }),
+      ...(datos.mercadoPagoLink !== undefined && { mercado_pago_link: datos.mercadoPagoLink }),
     })
     .eq("id", tenantId)
 }
@@ -572,7 +576,7 @@ export async function cerrarCajaHoy(): Promise<{ success: boolean; mensaje: stri
   let transferencia = 0
   ventasHoy.forEach((v) => {
     if (v.metodoPago === "efectivo") efectivo += v.totalVenta
-    else if (v.metodoPago === "transferencia") transferencia += v.totalVenta
+    else if (v.metodoPago === "transferencia" || v.metodoPago === "mercadopago") transferencia += v.totalVenta
     else if (v.metodoPago === "mixto") {
       efectivo += v.montoEfectivo ?? 0
       transferencia += v.montoTransferencia ?? 0
