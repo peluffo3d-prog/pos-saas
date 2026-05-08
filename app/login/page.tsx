@@ -131,12 +131,6 @@ export default function LoginPage() {
           </button>
         </div>
 
-        <p className="text-center text-sm text-muted-foreground mt-5">
-          ¿No tenés cuenta?{" "}
-          <a href="/signup" className="text-accent font-semibold hover:underline">
-            Registrate
-          </a>
-        </p>
       </div>
     </main>
   )
