@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Plus, Trash2, Minus, Download, Upload, X, Loader2, TrendingUp, Package, Camera, ChevronDown } from "lucide-react"
+import { Plus, Trash2, Minus, Download, Upload, X, Loader2, TrendingUp, Package, Camera, ChevronDown, ScanLine } from "lucide-react"
 import * as XLSX from "xlsx"
 import {
   getStock, eliminarProductoStock, ajustarCantidadStock, agregarProductoStock,
@@ -10,6 +10,7 @@ import {
 } from "@/lib/store"
 import { CATEGORIAS_KIOSCO, type CategoriaKiosco } from "@/lib/catalogos/kiosco"
 import { AppShell } from "@/components/app-shell"
+import { BarcodeScanner } from "@/components/stock/barcode-scanner"
 
 export default function StockPage() {
   const [producto, setProducto]       = useState("")
@@ -25,6 +26,7 @@ export default function StockPage() {
   const [mounted, setMounted]         = useState(false)
   const [subiendoFoto, setSub]        = useState<number | null>(null)
   const [importando, setImportando]   = useState(false)
+  const [scannerOpen, setScannerOpen] = useState(false)
 
   const fileInputRef    = useRef<HTMLInputElement>(null)
   const fotoEditRef     = useRef<HTMLInputElement>(null)
@@ -43,6 +45,17 @@ export default function StockPage() {
   const toast_ = (msg: string, ok = true) => {
     setToast({ msg, ok })
     setTimeout(() => setToast(null), 2800)
+  }
+
+  // ─── Barcode scanner ────────────────────────────────────────────────────────
+
+  const handleBarcodeEncontrado = (datos: { nombre: string; imagenUrl?: string; categoria?: string }) => {
+    setScannerOpen(false)
+    setProducto(datos.nombre)
+    if (datos.imagenUrl) setPreview(datos.imagenUrl)
+    if (datos.categoria) setCategoria(datos.categoria as CategoriaKiosco)
+    setSheetOpen(true)
+    toast_(`✓ Producto encontrado: ${datos.nombre}`)
   }
 
   // ─── Imagen en el form ───────────────────────────────────────────────────────
@@ -171,7 +184,14 @@ export default function StockPage() {
       const ws = wb.Sheets[wb.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws)
 
+      if (rows.length === 0) {
+        toast_("El archivo está vacío", false)
+        setImportando(false)
+        return
+      }
+
       let importados = 0
+      let errores = 0
       for (const row of rows) {
         const nombre = row["producto"] ?? row["Producto"] ?? row["PRODUCTO"] ?? ""
         const cant   = parseInt(String(row["cantidad"] ?? row["Cantidad"] ?? "1")) || 1
@@ -181,14 +201,22 @@ export default function StockPage() {
         const imgUrl = row["imagen_url"] ?? row["Imagen URL"] ?? undefined
 
         if (!nombre.trim() || !venta) continue
-        await agregarProductoStock({ producto: nombre.trim(), cantidad: cant, precioCosto: costo, precioVenta: venta, categoria: cat, imagenUrl: imgUrl })
-        importados++
+        try {
+          await agregarProductoStock({ producto: nombre.trim(), cantidad: cant, precioCosto: costo, precioVenta: venta, categoria: cat, imagenUrl: imgUrl })
+          importados++
+        } catch {
+          errores++
+        }
       }
 
       await cargarStock()
-      toast_(`✓ ${importados} productos importados`)
+      if (importados > 0) {
+        toast_(`✓ ${importados} producto${importados !== 1 ? "s" : ""} importado${importados !== 1 ? "s" : ""}${errores > 0 ? ` (${errores} errores)` : ""}`)
+      } else {
+        toast_("No se pudo importar ningún producto. Verificá que las columnas SQL estén actualizadas.", false)
+      }
     } catch {
-      toast_("Error al leer el archivo. Verificá el formato.", false)
+      toast_("No se pudo leer el archivo. Asegurate de que sea .csv o .xlsx", false)
     } finally {
       setImportando(false)
     }
@@ -380,33 +408,63 @@ export default function StockPage() {
             </div>
 
             <div className="space-y-4">
-              {/* Picker de foto */}
+              {/* 3 métodos de foto */}
               <div>
-                <label className="block text-sm font-semibold text-foreground mb-1.5">
+                <label className="block text-sm font-semibold text-foreground mb-2">
                   Foto del producto <span className="text-muted-foreground font-normal text-xs">(opcional)</span>
                 </label>
-                <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full border-2 border-dashed border-border rounded-2xl p-5 flex flex-col items-center gap-2 hover:border-accent hover:bg-accent/5 transition-all"
-                >
-                  {imagenPreview ? (
-                    <img src={imagenPreview} alt="Preview" className="w-24 h-24 object-cover rounded-xl" />
-                  ) : (
-                    <>
-                      <div className="w-12 h-12 bg-secondary rounded-xl flex items-center justify-center">
+
+                {imagenPreview ? (
+                  <div className="flex items-center gap-3 p-3 bg-secondary rounded-2xl">
+                    <img src={imagenPreview} alt="Preview" className="w-16 h-16 object-cover rounded-xl shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-foreground mb-1">Foto seleccionada</p>
+                      <button type="button" onClick={quitarImagen} className="text-xs text-destructive hover:underline">
+                        Quitar foto
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* Método 1: Escanear código */}
+                    <button
+                      type="button"
+                      onClick={() => { setSheetOpen(false); setScannerOpen(true) }}
+                      className="flex flex-col items-center gap-1.5 p-3 bg-accent/10 border-2 border-accent/30 hover:border-accent hover:bg-accent/15 rounded-2xl transition-all"
+                    >
+                      <div className="w-10 h-10 bg-accent rounded-xl flex items-center justify-center">
+                        <ScanLine className="w-5 h-5 text-accent-foreground" />
+                      </div>
+                      <p className="text-[10px] font-bold text-accent text-center leading-tight">Escanear código</p>
+                    </button>
+
+                    {/* Método 2: Cámara / galería */}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex flex-col items-center gap-1.5 p-3 bg-secondary border-2 border-border hover:border-accent/40 hover:bg-accent/5 rounded-2xl transition-all"
+                    >
+                      <div className="w-10 h-10 bg-muted rounded-xl flex items-center justify-center">
                         <Camera className="w-5 h-5 text-muted-foreground" />
                       </div>
-                      <p className="text-sm text-muted-foreground">Tocá para sacar o elegir una foto</p>
-                    </>
-                  )}
-                </button>
-                {imagenPreview && (
-                  <button type="button" onClick={quitarImagen} className="text-xs text-muted-foreground mt-1.5 hover:text-destructive transition-colors">
-                    Quitar foto
-                  </button>
+                      <p className="text-[10px] font-bold text-muted-foreground text-center leading-tight">Cámara / galería</p>
+                    </button>
+
+                    {/* Método 3: Sin foto */}
+                    <button
+                      type="button"
+                      disabled
+                      className="flex flex-col items-center gap-1.5 p-3 bg-secondary border-2 border-dashed border-border rounded-2xl opacity-40 cursor-default"
+                    >
+                      <div className="w-10 h-10 bg-muted rounded-xl flex items-center justify-center">
+                        <Package className="w-5 h-5 text-muted-foreground" />
+                      </div>
+                      <p className="text-[10px] font-bold text-muted-foreground text-center leading-tight">Sin foto</p>
+                    </button>
+                  </div>
                 )}
+
+                <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
               </div>
 
               {/* Campos del producto */}
@@ -466,6 +524,14 @@ export default function StockPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Barcode scanner */}
+      {scannerOpen && (
+        <BarcodeScanner
+          onEncontrado={handleBarcodeEncontrado}
+          onCerrar={() => { setScannerOpen(false); setSheetOpen(true) }}
+        />
       )}
 
       {/* Toast */}
