@@ -1,72 +1,81 @@
 import { createClient } from "@/lib/supabase/client"
+import { CATALOGO_KIOSCO } from "@/lib/catalogos/kiosco"
 
 const DEMO_EMAIL = "demo@possaas.app"
-const DEMO_PASS = "DemoPos2026!"
+const DEMO_PASS  = "DemoPos2026!"
 
-const DEMO_STOCK = [
-  { producto:"Coca Cola 500ml",      cantidad:24, precio_costo:800,  precio_venta:1400 },
-  { producto:"Agua mineral 500ml",   cantidad:30, precio_costo:350,  precio_venta:700  },
-  { producto:"Alfajor triple",       cantidad:48, precio_costo:380,  precio_venta:700  },
-  { producto:"Papas fritas 90g",     cantidad:20, precio_costo:550,  precio_venta:950  },
-  { producto:"Chocolatín",           cantidad:60, precio_costo:180,  precio_venta:380  },
-  { producto:"Cigarrillos Marlboro", cantidad:15, precio_costo:2200, precio_venta:3200 },
-  { producto:"Sprite 1.5L",          cantidad:12, precio_costo:1100, precio_venta:1800 },
-  { producto:"Sandwichito de miga",  cantidad:8,  precio_costo:900,  precio_venta:1600 },
-]
+// Open Food Facts CDN path: EAN 7790895000119 → 779/089/500/0119
+function eanToImageUrl(ean: string): string | null {
+  if (!ean || ean.length < 8) return null
+  const p = ean.padStart(13, "0")
+  return `https://images.openfoodfacts.org/images/products/${p.slice(0,3)}/${p.slice(3,6)}/${p.slice(6,9)}/${p.slice(9)}/front_es.400.jpg`
+}
 
 export async function entrarComoDemo(): Promise<{ ok: boolean; error?: string }> {
   const db = createClient()
 
-  // 1. Intentar login con la cuenta demo
-  const { error: loginErr } = await db.auth.signInWithPassword({
-    email: DEMO_EMAIL,
-    password: DEMO_PASS,
-  })
+  // 1 — Login
+  const { error: loginErr } = await db.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASS })
 
   if (loginErr) {
-    // 2. Si no existe, intentar crearla
-    const { error: signupErr } = await db.auth.signUp({
-      email: DEMO_EMAIL,
-      password: DEMO_PASS,
-    })
-
-    // Si el signup falla por razón distinta a "ya existe", retornar error
+    const { error: signupErr } = await db.auth.signUp({ email: DEMO_EMAIL, password: DEMO_PASS })
     if (signupErr && !signupErr.message.toLowerCase().includes("already")) {
       return { ok: false, error: signupErr.message }
     }
-
-    // Volver a loguearse (ya sea que se creó o ya existía)
-    const { error: reloginErr } = await db.auth.signInWithPassword({
-      email: DEMO_EMAIL,
-      password: DEMO_PASS,
-    })
+    const { error: reloginErr } = await db.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASS })
     if (reloginErr) return { ok: false, error: reloginErr.message }
   }
 
-  // 3. Verificar si ya tiene tenant
+  // 2 — Usuario
   const { data: { user } } = await db.auth.getUser()
   if (!user) return { ok: false, error: "No se pudo obtener el usuario" }
 
+  // 3 — Tenant existente?
   const { data: existing } = await db
-    .from("tenant_users")
-    .select("tenant_id")
-    .eq("user_id", user.id)
-    .single()
+    .from("tenant_users").select("tenant_id").eq("user_id", user.id).single()
 
-  if (existing?.tenant_id) return { ok: true }
+  let tenantId: string
 
-  // 4. Crear tenant demo via RPC (bypasea RLS)
-  const { data: tenantId, error: rpcErr } = await db
-    .rpc("create_tenant_for_user", { p_nombre: "Comercio Demo", p_email: DEMO_EMAIL })
+  if (existing?.tenant_id) {
+    tenantId = existing.tenant_id
 
-  if (rpcErr || !tenantId) {
-    return { ok: false, error: "Error creando tenant demo: " + rpcErr?.message }
+    // Si ya tiene stock completo no hacemos nada
+    const { count } = await db
+      .from("stock").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId)
+    if ((count ?? 0) >= 50) return { ok: true }
+
+    // Stock incompleto — limpiar y resembrar
+    await db.from("stock").delete().eq("tenant_id", tenantId)
+  } else {
+    // 4 — Crear tenant demo via RPC (bypasea RLS)
+    const { data: newId, error: rpcErr } = await db
+      .rpc("create_tenant_for_user", { p_nombre: "Kiosco La Esquina", p_email: DEMO_EMAIL })
+    if (rpcErr || !newId) return { ok: false, error: "Error creando tenant: " + rpcErr?.message }
+    tenantId = newId
+
+    // Datos del comercio demo
+    await db.from("tenants").update({
+      domicilio: "Av. San Martín 1250, Morón",
+      condicion_iva: "monotributista",
+      punto_venta: 1,
+    }).eq("id", tenantId)
   }
 
-  // 5. Poblar con stock de ejemplo
-  await db.from("stock").insert(
-    DEMO_STOCK.map((item) => ({ ...item, tenant_id: tenantId }))
-  )
+  // 5 — Insertar catálogo completo con fotos
+  const items = CATALOGO_KIOSCO.map((p) => ({
+    tenant_id:    tenantId,
+    producto:     p.producto,
+    cantidad:     p.cantidad_inicial,
+    precio_costo: p.precio_costo,
+    precio_venta: p.precio_venta,
+    categoria:    p.categoria,
+    imagen_url:   eanToImageUrl(p.ean),
+  }))
+
+  // Batches de 50 para no saturar el request
+  for (let i = 0; i < items.length; i += 50) {
+    await db.from("stock").insert(items.slice(i, i + 50))
+  }
 
   return { ok: true }
 }

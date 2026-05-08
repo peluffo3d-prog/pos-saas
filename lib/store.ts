@@ -286,16 +286,23 @@ export async function precargarCatalogoKiosco(
   const productos = CATALOGO_KIOSCO.filter((p) => categorias.includes(p.categoria))
   if (productos.length === 0) return
 
+  const eanToImg = (ean: string) => {
+    if (!ean || ean.length < 8) return null
+    const p = ean.padStart(13, "0")
+    return `https://images.openfoodfacts.org/images/products/${p.slice(0,3)}/${p.slice(3,6)}/${p.slice(6,9)}/${p.slice(9)}/front_es.400.jpg`
+  }
+
   await supabase()
     .from("stock")
     .insert(
       productos.map((p) => ({
-        tenant_id: tenantId,
-        producto: p.producto,
-        cantidad: p.cantidad_inicial,
+        tenant_id:    tenantId,
+        producto:     p.producto,
+        cantidad:     p.cantidad_inicial,
         precio_costo: p.precio_costo,
         precio_venta: p.precio_venta,
-        categoria: p.categoria,
+        categoria:    p.categoria,
+        imagen_url:   eanToImg(p.ean),
       }))
     )
 }
