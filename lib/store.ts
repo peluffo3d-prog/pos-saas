@@ -315,6 +315,43 @@ export async function ajustarCantidadStock(id: number, nuevaCantidad: number): P
     .eq("tenant_id", tenantId)
 }
 
+export async function ajustarPreciosMasivo(
+  porcentaje: number,
+  categoria?: string,
+  aplicarA: "venta" | "ambos" = "venta"
+): Promise<number> {
+  const tenantId = await getTenantId()
+  if (!tenantId) return 0
+
+  const items = await getStock()
+  const filtrados = categoria && categoria !== "todas"
+    ? items.filter((i) => i.categoria === categoria)
+    : items
+
+  if (filtrados.length === 0) return 0
+
+  const factor = 1 + porcentaje / 100
+  const db = supabase()
+
+  await Promise.all(
+    filtrados.map((item) => {
+      const nuevaVenta = Math.round(item.precioVenta * factor)
+      const nuevoCosto = aplicarA === "ambos" ? Math.round(item.precioCosto * factor) : item.precioCosto
+      return db
+        .from("stock")
+        .update({
+          precio_venta: nuevaVenta,
+          precio_costo: nuevoCosto,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", item.id)
+        .eq("tenant_id", tenantId)
+    })
+  )
+
+  return filtrados.length
+}
+
 export async function buscarProductos(query: string): Promise<StockItem[]> {
   const tenantId = await getTenantId()
   if (!tenantId) return []

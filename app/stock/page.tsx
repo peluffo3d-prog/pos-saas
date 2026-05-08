@@ -1,11 +1,11 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Plus, Trash2, Minus, Download, Upload, X, Loader2, TrendingUp, Package, Camera, ChevronDown, ScanLine } from "lucide-react"
+import { Plus, Trash2, Minus, Download, Upload, X, Loader2, TrendingUp, Package, Camera, ChevronDown, ScanLine, Percent, ChevronUp } from "lucide-react"
 import * as XLSX from "xlsx"
 import {
   getStock, eliminarProductoStock, ajustarCantidadStock, agregarProductoStock,
-  subirImagenProducto, actualizarImagenProducto,
+  subirImagenProducto, actualizarImagenProducto, ajustarPreciosMasivo,
   type StockItem,
 } from "@/lib/store"
 import { CATEGORIAS_KIOSCO, type CategoriaKiosco } from "@/lib/catalogos/kiosco"
@@ -26,7 +26,12 @@ export default function StockPage() {
   const [mounted, setMounted]         = useState(false)
   const [subiendoFoto, setSub]        = useState<number | null>(null)
   const [importando, setImportando]   = useState(false)
-  const [scannerOpen, setScannerOpen] = useState(false)
+  const [scannerOpen, setScannerOpen]   = useState(false)
+  const [ajusteOpen, setAjusteOpen]     = useState(false)
+  const [ajustePct, setAjustePct]       = useState("")
+  const [ajusteCat, setAjusteCat]       = useState("todas")
+  const [ajusteTarget, setAjusteTarget] = useState<"venta" | "ambos">("venta")
+  const [ajustando, setAjustando]       = useState(false)
 
   const fileInputRef    = useRef<HTMLInputElement>(null)
   const fotoEditRef     = useRef<HTMLInputElement>(null)
@@ -222,6 +227,18 @@ export default function StockPage() {
     }
   }
 
+  const handleAjusteMasivo = async () => {
+    const pct = parseFloat(ajustePct)
+    if (!pct || pct === 0) return
+    setAjustando(true)
+    const cantidad = await ajustarPreciosMasivo(pct, ajusteCat, ajusteTarget)
+    await cargarStock()
+    setAjustando(false)
+    setAjusteOpen(false)
+    setAjustePct("")
+    toast_(`✓ ${cantidad} producto${cantidad !== 1 ? "s" : ""} actualizados (${pct > 0 ? "+" : ""}${pct}%)`)
+  }
+
   const exportarExcel = () => {
     const rows = historial.map((i) => ({
       Producto: i.producto, Cantidad: i.cantidad,
@@ -294,18 +311,152 @@ export default function StockPage() {
       {/* Sticky header */}
       <div className="sticky top-0 z-20 -mt-6">
         <div className="bg-background rounded-t-3xl px-4 pt-4 pb-3 border-b border-border shadow-sm">
-          <div className="max-w-xl mx-auto flex items-center justify-between">
-            <div>
-              <p className="font-semibold text-foreground text-sm">
-                {historial.length > 0 ? `${historial.length} productos` : "Sin productos aún"}
-              </p>
-              {pocoStock > 0 && (
-                <p className="text-xs text-warning-foreground font-medium">⚠️ {pocoStock} con poco stock</p>
-              )}
+          <div className="max-w-xl mx-auto">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-foreground text-sm">
+                  {historial.length > 0 ? `${historial.length} productos` : "Sin productos aún"}
+                </p>
+                {pocoStock > 0 && (
+                  <p className="text-xs text-warning-foreground font-medium">⚠️ {pocoStock} con poco stock</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {historial.length > 0 && (
+                  <button
+                    onClick={() => setAjusteOpen((v) => !v)}
+                    className={`flex items-center gap-1.5 px-3 py-2.5 rounded-2xl text-sm font-bold transition-all ${
+                      ajusteOpen
+                        ? "bg-accent text-accent-foreground"
+                        : "bg-secondary border border-border text-foreground hover:bg-border"
+                    }`}
+                  >
+                    <Percent className="w-4 h-4" />
+                    {ajusteOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+                <button onClick={() => setSheetOpen(true)} className="flex items-center gap-1.5 bg-accent text-accent-foreground px-4 py-2.5 rounded-2xl text-sm font-bold hover:opacity-90 active:scale-95 transition-all">
+                  <Plus className="w-4 h-4" /> Agregar
+                </button>
+              </div>
             </div>
-            <button onClick={() => setSheetOpen(true)} className="flex items-center gap-1.5 bg-accent text-accent-foreground px-4 py-2.5 rounded-2xl text-sm font-bold hover:opacity-90 active:scale-95 transition-all">
-              <Plus className="w-4 h-4" /> Agregar
-            </button>
+
+            {/* Panel ajuste masivo */}
+            {ajusteOpen && (
+              <div className="mt-3 p-4 bg-card border border-border rounded-2xl shadow-sm">
+                <p className="text-xs font-bold text-foreground uppercase tracking-widest mb-3">Ajuste masivo de precios</p>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  {/* Categoría */}
+                  <div>
+                    <label className="block text-[10px] font-semibold text-muted-foreground mb-1 uppercase tracking-wide">Categoría</label>
+                    <div className="relative">
+                      <select
+                        value={ajusteCat}
+                        onChange={(e) => setAjusteCat(e.target.value)}
+                        className="w-full border border-border bg-secondary text-foreground rounded-xl px-3 py-2.5 text-xs font-semibold appearance-none pr-7 focus:border-accent focus:ring-1 focus:ring-accent/20 outline-none"
+                      >
+                        <option value="todas">Todas</option>
+                        {CATEGORIAS_KIOSCO.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                    </div>
+                  </div>
+
+                  {/* Aplicar a */}
+                  <div>
+                    <label className="block text-[10px] font-semibold text-muted-foreground mb-1 uppercase tracking-wide">Aplicar a</label>
+                    <div className="flex rounded-xl border border-border overflow-hidden">
+                      {(["venta", "ambos"] as const).map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => setAjusteTarget(opt)}
+                          className={`flex-1 py-2.5 text-xs font-bold transition-colors ${
+                            ajusteTarget === opt
+                              ? "bg-accent text-accent-foreground"
+                              : "bg-secondary text-muted-foreground hover:bg-border"
+                          }`}
+                        >
+                          {opt === "venta" ? "Solo venta" : "Venta + costo"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Porcentaje + botones rápidos */}
+                <div className="mb-3">
+                  <label className="block text-[10px] font-semibold text-muted-foreground mb-1 uppercase tracking-wide">Porcentaje de ajuste</label>
+                  <div className="flex gap-1.5 mb-2 flex-wrap">
+                    {[5, 10, 15, 20, 30, 50].map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setAjustePct(String(p))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                          ajustePct === String(p)
+                            ? "bg-accent text-accent-foreground"
+                            : "bg-secondary border border-border text-foreground hover:bg-border"
+                        }`}
+                      >
+                        +{p}%
+                      </button>
+                    ))}
+                    {[-10, -5].map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setAjustePct(String(p))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                          ajustePct === String(p)
+                            ? "bg-destructive/20 text-destructive"
+                            : "bg-secondary border border-border text-foreground hover:bg-border"
+                        }`}
+                      >
+                        {p}%
+                      </button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      value={ajustePct}
+                      onChange={(e) => setAjustePct(e.target.value)}
+                      placeholder="Ej: 12.5"
+                      className="w-full border border-border bg-secondary text-foreground rounded-xl px-4 py-2.5 pr-8 text-sm focus:border-accent focus:ring-1 focus:ring-accent/20 outline-none"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">%</span>
+                  </div>
+                </div>
+
+                {/* Preview */}
+                {ajustePct && parseFloat(ajustePct) !== 0 && (
+                  <div className="mb-3 px-3 py-2 bg-secondary rounded-xl flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      {ajusteCat === "todas" ? "Todos los productos" : ajusteCat}
+                      {" · "}{ajusteTarget === "venta" ? "precio de venta" : "venta y costo"}
+                    </p>
+                    <span className={`text-sm font-bold ${parseFloat(ajustePct) > 0 ? "text-accent" : "text-destructive"}`}>
+                      {parseFloat(ajustePct) > 0 ? "+" : ""}{ajustePct}%
+                    </span>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleAjusteMasivo}
+                  disabled={!ajustePct || parseFloat(ajustePct) === 0 || ajustando}
+                  className="w-full bg-accent text-accent-foreground font-bold py-3 rounded-xl hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed transition-all text-sm flex items-center justify-center gap-2"
+                >
+                  {ajustando ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Aplicando...</>
+                  ) : (
+                    <><Percent className="w-4 h-4" /> Aplicar ajuste</>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
