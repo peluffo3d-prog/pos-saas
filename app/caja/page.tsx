@@ -327,14 +327,20 @@ export default function CajaPage() {
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="text-xs text-accent font-medium">${v.totalVenta.toLocaleString("es-AR")}</span>
                       {v.metodoPago && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
-                          v.metodoPago === "efectivo" ? "bg-accent/15 text-accent"
-                          : v.metodoPago === "transferencia" ? "bg-[oklch(0.55_0.15_230/0.15)] text-[oklch(0.45_0.15_230)]"
-                          : "bg-warning/15 text-warning-foreground"
-                        }`}>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                            v.metodoPago === "efectivo" ? "bg-accent/15 text-accent"
+                            : v.metodoPago === "transferencia" ? "bg-[oklch(0.55_0.15_230/0.15)] text-[oklch(0.45_0.15_230)]"
+                            : v.metodoPago === "mercadopago" ? ""
+                            : "bg-warning/15 text-warning-foreground"
+                          }`}
+                          style={v.metodoPago === "mercadopago" ? { backgroundColor: "#009ee315", color: "#009ee3" } : undefined}
+                        >
                           {v.metodoPago === "mixto"
                             ? `Mixto $${v.montoEfectivo?.toLocaleString("es-AR")}/$${v.montoTransferencia?.toLocaleString("es-AR")}`
-                            : v.metodoPago === "efectivo" ? "Efectivo" : "Transferencia"}
+                            : v.metodoPago === "efectivo" ? "Efectivo"
+                            : v.metodoPago === "mercadopago" ? "Mercado Pago"
+                            : "Transferencia"}
                         </span>
                       )}
                     </div>
